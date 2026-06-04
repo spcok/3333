@@ -34,6 +34,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
     "@tanstack/router-devtools": "^1.167.0",
     "@tanstack/router-plugin": "^1.168.14",
     "@types/express": "^4.17.21",
