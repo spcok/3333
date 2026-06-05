@@ -50,6 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryKey: ['userProfile', user?.id],
     queryFn: async () => {
       if (!user?.id) return null;
+      
+      console.log(`[Auth Engine] Fetching profile for UUID: ${user.id}`);
+      
       const { data, error } = await supabase
         .from('users')
         .select('id, name, initials, pin, role')
@@ -57,8 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single();
       
       if (error && error.code !== 'PGRST116') {
-        console.error('Profile fetch failed:', error.message);
+        console.error('[Auth Engine] Profile fetch failed:', error.message);
       }
+      
+      console.log('[Auth Engine] Profile loaded into Cache:', data);
       return data as UserProfile;
     },
     enabled: !!user?.id,
@@ -82,12 +87,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [resetIdleTimer]);
 
   const unlock = (enteredPin: string) => {
-    if (!profile?.pin) return false;
-    if (enteredPin === profile.pin) {
+    console.log('[Auth Engine] Unlock Attempt:', {
+      entered: enteredPin,
+      cachedPin: profile?.pin,
+      isProfileLoaded: !!profile
+    });
+
+    if (!profile?.pin) {
+      console.error('[Auth Engine] CRITICAL: No PIN found in local cache. The device will not unlock.');
+      return false;
+    }
+    
+    // Force strict string conversion to prevent integer mismatch (1111 vs "1111")
+    if (enteredPin === String(profile.pin)) {
       setIsLocked(false);
       resetIdleTimer();
       return true;
     }
+    
     return false;
   };
 

@@ -3,6 +3,8 @@ import { createRootRoute, Outlet } from '@tanstack/react-router';
 import { Lock, Delete, LogIn } from 'lucide-react';
 import { AuthProvider, useAuth } from '../lib/auth';
 import { supabase } from '../lib/supabase';
+import { Sidebar } from '../components/layout/Sidebar';
+import { Header } from '../components/layout/Header';
 
 export const Route = createRootRoute({
   component: () => (
@@ -12,6 +14,7 @@ export const Route = createRootRoute({
   ),
 });
 
+// 1. Master Login Screen
 function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -58,6 +61,7 @@ function LoginScreen() {
   );
 }
 
+// 2. Hardware Lock Overlay
 function LockScreen() {
   const { unlock } = useAuth();
   const [pin, setPin] = useState('');
@@ -72,6 +76,11 @@ function LockScreen() {
     }
   }, [pin, unlock]);
 
+  const handleDelete = () => {
+    setPin(p => p.slice(0, -1));
+    setError(false);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0A0B0E]/95 backdrop-blur-md">
       <div className="bg-[#0F1117] p-8 rounded-3xl shadow-2xl w-full max-w-sm mx-4 border border-slate-800/80">
@@ -80,22 +89,24 @@ function LockScreen() {
           <h2 className="text-2xl font-black text-white tracking-tight uppercase">Strix<span className="text-rose-500">Locked</span></h2>
         </div>
         <div className="flex justify-center gap-4 mb-8">
-          {[...Array(4)].map((_, i) => <div key={i} className={`w-3 h-3 rounded-full transition-all duration-300 ${error ? 'bg-rose-500' : i < pin.length ? 'bg-emerald-500' : 'bg-slate-800'}`} />)}
+          {[...Array(4)].map((_, i) => <div key={i} className={`w-3 h-3 rounded-full transition-all duration-300 ${error ? 'bg-rose-500 shadow-[0_0_10px_rgba(225,29,72,0.5)]' : i < pin.length ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-slate-800'}`} />)}
         </div>
         <div className="grid grid-cols-3 gap-3">
           {[1, 2, 3, 4, 5, 6, 7, 8, 9, '', '0'].map((num, i) => (
             num === '' ? <div key={i} /> : 
-            <button key={i} onClick={() => { if(pin.length < 4) setPin(p => p + num.toString()) }} className="h-16 text-xl font-black text-slate-300 bg-[#0A0B0E] border border-slate-800/50 rounded-2xl">{num}</button>
+            <button key={i} onClick={() => { if(pin.length < 4) setPin(p => p + num.toString()) }} className="h-16 text-xl font-black text-slate-300 bg-[#0A0B0E] hover:bg-slate-800 hover:text-white border border-slate-800/50 rounded-2xl transition-colors">{num}</button>
           ))}
-          <button onClick={() => { setPin(p => p.slice(0, -1)); setError(false); }} className="h-16 flex items-center justify-center text-slate-500 bg-[#0A0B0E] border border-slate-800/50 rounded-2xl"><Delete size={24} /></button>
+          <button onClick={handleDelete} className="h-16 flex items-center justify-center text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 bg-[#0A0B0E] border border-slate-800/50 rounded-2xl transition-colors"><Delete size={24} /></button>
         </div>
       </div>
     </div>
   );
 }
 
+// 3. Layout Gatekeeper with UI Shell
 function AuthGuard() {
   const { session, isLoading, isLocked } = useAuth();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   if (isLoading) {
     return <div className="min-h-screen bg-[#0A0B0E] flex items-center justify-center"><div className="animate-pulse text-emerald-500 font-black tracking-widest uppercase">Initializing Engine...</div></div>;
@@ -104,11 +115,18 @@ function AuthGuard() {
   if (!session) return <LoginScreen />;
 
   return (
+    // Light Theme applied specifically here to the main app container
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans antialiased relative overflow-hidden">
       {isLocked && <LockScreen />}
-      <main className="flex-1 overflow-auto w-full h-full">
-        <Outlet />
-      </main>
+      
+      <Sidebar isOpen={isSidebarOpen} />
+      
+      <div className="flex flex-col flex-1 overflow-hidden transition-all duration-300">
+        <Header toggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} isSidebarOpen={isSidebarOpen} />
+        <main className="flex-1 overflow-auto p-6">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

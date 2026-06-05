@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "StrixOS",
+  "description": "An integrated animal husbandry, clinical medical records, logistics, safety compliance, and staff shift scheduling platform.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

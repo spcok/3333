@@ -37,7 +37,7 @@ persistQueryClient({
   queryClient,
   persister,
   maxAge: 1000 * 60 * 60 * 24 * 14,
-  buster: 'v1.0.0',
+  buster: 'v1.0.1',
 });
 
 const router = createRouter({
