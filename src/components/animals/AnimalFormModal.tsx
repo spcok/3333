@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useForm } from '@tanstack/react-form';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, Save, Loader2, AlertCircle } from 'lucide-react';
+import { useMutation, useQueryClient, useQuery } from '@tanstack/react-query';
+import { X, Save, Loader2, AlertCircle, Users, User } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import { AnimalCategory, AnimalStatus } from '../../types';
+import { AnimalCategory, AnimalStatus, RecordType, Animal } from '../../types';
 import { ImageUploader } from '../ui/ImageUploader';
 
 interface AnimalFormModalProps {
@@ -26,6 +26,20 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
   const [activeTab, setActiveTab] = useState<TabId>('core');
   const [uploadErrorMsg, setUploadErrorMsg] = useState<string | null>(null);
 
+  const { data: existingGroups = [] } = useQuery({
+    queryKey: ['animal-groups'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('animals')
+        .select('id, name, species')
+        .eq('record_type', 'GROUP')
+        .order('name');
+      
+      if (error) throw error;
+      return data;
+    }
+  });
+
   const uploadToSupabase = async (file: Blob, folder: string): Promise<string> => {
     const fileExt = file.type === 'image/png' ? 'png' : 'jpg';
     const fileName = `${folder}/${crypto.randomUUID()}.${fileExt}`;
@@ -35,13 +49,13 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
       .upload(fileName, file, { contentType: file.type || 'image/jpeg' });
 
     if (error) throw error;
-
+    
     const { data } = supabase.storage.from('media').getPublicUrl(fileName);
     return data.publicUrl;
   };
 
   const createAnimalMutation = useMutation({
-    mutationFn: async (newAnimal: any) => {
+    mutationFn: async (newAnimal: Partial<Animal>) => {
       const { data, error } = await supabase
         .from('animals')
         .insert([newAnimal])
@@ -54,10 +68,16 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
     onMutate: async (newAnimal) => {
       await queryClient.cancelQueries({ queryKey: ['animals', 'dashboard'] });
       const previousAnimals = queryClient.getQueryData(['animals', 'dashboard']);
+      
       queryClient.setQueryData(['animals', 'dashboard'], (old: any) => {
-        const optimisticRecord = { ...newAnimal, id: crypto.randomUUID(), status: newAnimal.status || 'ON_DISPLAY' };
+        const optimisticRecord = { 
+          ...newAnimal, 
+          id: crypto.randomUUID(), 
+          status: newAnimal.status || 'ON_DISPLAY' 
+        };
         return [...(old || []), optimisticRecord];
       });
+      
       return { previousAnimals };
     },
     onError: (err, newAnimal, context) => {
@@ -68,18 +88,59 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['animals', 'dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['animal-groups'] });
     },
   });
 
   const form = useForm({
     defaultValues: {
-      name: '', species: '', category: 'OWL' as AnimalCategory, status: 'ON_DISPLAY' as AnimalStatus, gender: '', date_of_birth: '', is_dob_unknown: false, 
+      record_type: 'INDIVIDUAL' as RecordType,
+      parent_group_id: '',
+      name: '', 
+      species: '', 
+      latin_name: '', 
+      census_count: 1 as number | '', 
+      category: 'OWL' as AnimalCategory, 
+      status: 'ON_DISPLAY' as AnimalStatus, 
+      gender: '', 
+      date_of_birth: '', 
+      is_dob_unknown: false, 
       profile_image_url: null as string | Blob | null,
-      microchip_id: '', ring_number: '', has_no_id: false, flying_weight_g: '' as number | '', winter_weight_g: '' as number | '', average_target_weight: '' as number | '', weight_unit: 'g',
-      ambient_temp_only: false, target_day_temp_c: '' as number | '', target_night_temp_c: '' as number | '', water_tipping_temp: '' as number | '', target_humidity_min_percent: '' as number | '', target_humidity_max_percent: '' as number | '', misting_frequency: '', special_requirements: '', critical_husbandry_notes: '',
-      hazard_rating: 'LOW', is_venomous: false, red_list_status: 'LC', acquisition_date: '', acquisition_type: 'BRED', origin: '', origin_location: '', is_boarding: false, is_quarantine: false, 
+      
+      microchip_id: '', 
+      ring_number: '', 
+      has_no_id: false, 
+      flying_weight: '' as number | '', 
+      winter_weight: '' as number | '', 
+      average_target_weight: '' as number | '', 
+      weight_unit: 'g',
+      
+      ambient_temp_only: false, 
+      target_day_temp_c: '' as number | '', 
+      target_night_temp_c: '' as number | '', 
+      water_tipping_temp: '' as number | '', 
+      target_humidity_min_percent: '' as number | '', 
+      target_humidity_max_percent: '' as number | '', 
+      misting_frequency: '', 
+      special_requirements: '', 
+      critical_husbandry_notes: '',
+      
+      hazard_rating: 'LOW', 
+      is_venomous: false, 
+      red_list_status: 'LC', 
+      acquisition_date: '', 
+      acquisition_type: 'BRED', 
+      origin: '', 
+      origin_location: '', 
+      is_boarding: false, 
+      is_quarantine: false, 
       distribution_map_url: null as string | Blob | null,
-      lineage_unknown: false, sire_id: '', dam_id: '', description: '', display_order: '' as number | ''
+      
+      lineage_unknown: false, 
+      sire_id: '', 
+      dam_id: '', 
+      description: '', 
+      display_order: '' as number | ''
     },
     onSubmit: async ({ value }) => {
       setUploadErrorMsg(null);
@@ -93,12 +154,44 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
           payload.distribution_map_url = await uploadToSupabase(payload.distribution_map_url, 'maps');
         }
 
-        const numericFields = ['flying_weight_g', 'winter_weight_g', 'average_target_weight', 'target_day_temp_c', 'target_night_temp_c', 'water_tipping_temp', 'target_humidity_min_percent', 'target_humidity_max_percent', 'display_order'];
-        numericFields.forEach(field => { payload[field] = payload[field] === '' ? null : Number(payload[field]); });
+        const convertToGrams = (weight: number | string | null, unit: string) => {
+          if (weight === '' || weight === null || weight === undefined) return null;
+          const num = Number(weight);
+          if (isNaN(num)) return null;
+          
+          let grams = num;
+          if (unit === 'kg') grams = num * 1000;
+          if (unit === 'oz') grams = num * 28.3495;
+          if (unit === 'lb') grams = num * 453.592;
+          
+          return Number(grams.toFixed(2));
+        };
 
-        const stringOrNullFields = ['date_of_birth', 'acquisition_date', 'sire_id', 'dam_id', 'profile_image_url', 'distribution_map_url'];
-        stringOrNullFields.forEach(field => { payload[field] = payload[field] === '' ? null : payload[field]; });
+        const unit = payload.weight_unit;
+        payload.flying_weight = convertToGrams(payload.flying_weight, unit);
+        payload.winter_weight = convertToGrams(payload.winter_weight, unit);
+        payload.average_target_weight = convertToGrams(payload.average_target_weight, unit);
+
+        const numericFields = [
+          'census_count', 'target_day_temp_c', 'target_night_temp_c', 'water_tipping_temp', 
+          'target_humidity_min_percent', 'target_humidity_max_percent', 'display_order'
+        ];
+        numericFields.forEach(field => { 
+          payload[field] = payload[field] === '' ? null : Number(payload[field]); 
+        });
+
+        const stringOrNullFields = [
+          'parent_group_id', 'latin_name', 'date_of_birth', 'acquisition_date', 
+          'sire_id', 'dam_id', 'profile_image_url', 'distribution_map_url'
+        ];
+        stringOrNullFields.forEach(field => { 
+          payload[field] = payload[field] === '' ? null : payload[field]; 
+        });
         
+        if (payload.record_type === 'GROUP') {
+          payload.parent_group_id = null;
+        }
+
         await createAnimalMutation.mutateAsync(payload);
         onClose();
 
@@ -111,37 +204,54 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
 
   if (!isOpen) return null;
 
-  const renderField = (name: any, label: string, type: 'text' | 'number' | 'date' | 'textarea' = 'text', placeholder?: string) => (
-    <form.Field
-      name={name}
-      children={(field) => (
-        <div>
-          <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">{label}</label>
+  const TextInput = ({ name, label, type = 'text', placeholder }: { name: any, label: string, type?: 'text' | 'number' | 'date' | 'textarea', placeholder?: string }) => (
+    <form.Field name={name}>
+      {(field) => (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</label>
           {type === 'textarea' ? (
             <textarea
               value={field.state.value as string}
               onChange={(e) => field.handleChange(e.target.value as any)}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm h-24 custom-scrollbar"
               placeholder={placeholder}
+              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm h-24 custom-scrollbar"
             />
           ) : (
             <input
               type={type}
               value={field.state.value as any}
               onChange={(e) => field.handleChange(type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) as any : e.target.value as any)}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm"
               placeholder={placeholder}
+              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm"
             />
           )}
         </div>
       )}
-    />
+    </form.Field>
   );
 
-  const renderCheckbox = (name: any, label: string) => (
-    <form.Field
-      name={name}
-      children={(field) => (
+  const SelectInput = ({ name, label, options }: { name: any, label: string, options: { value: string, label: string }[] }) => (
+    <form.Field name={name}>
+      {(field) => (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</label>
+          <select
+            value={field.state.value as string}
+            onChange={(e) => field.handleChange(e.target.value as any)}
+            className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm"
+          >
+            {options.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+    </form.Field>
+  );
+
+  const CheckboxInput = ({ name, label }: { name: any, label: string }) => (
+    <form.Field name={name}>
+      {(field) => (
         <label className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors">
           <input
             type="checkbox"
@@ -152,7 +262,7 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
           <span className="text-xs font-bold text-slate-700 tracking-wide">{label}</span>
         </label>
       )}
-    />
+    </form.Field>
   );
 
   return (
@@ -161,8 +271,8 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
         
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
           <div>
-            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Add New Animal</h2>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mt-0.5">Register comprehensive record</p>
+            <h2 className="text-lg font-bold text-slate-900 tracking-tight">Add New Record</h2>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mt-0.5">StrixOS Database Matrix</p>
           </div>
           <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-xl transition-colors">
             <X size={20} />
@@ -194,182 +304,243 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
           <form id="animal-mutation-form" onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); form.handleSubmit(); }} className="space-y-6">
             
             <div className={activeTab === 'core' ? 'block' : 'hidden'}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {renderField('name', 'Animal Name (Optional)', 'text', 'e.g. Apollo')}
-                {renderField('species', 'Species', 'text', 'e.g. Golden Eagle')}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 
-                <form.Field
-                  name="category"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Category</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value as AnimalCategory)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="OWL">Owl</option><option value="RAPTOR">Raptor</option><option value="MAMMAL">Mammal</option><option value="EXOTIC">Exotic</option>
-                      </select>
-                    </div>
-                  )}
-                />
-
-                <form.Field
-                  name="status"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Initial Status</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value as AnimalStatus)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="ON_DISPLAY">On Display</option>
-                        <option value="OFF_DISPLAY">Off Display</option>
-                        <option value="QUARANTINE">Quarantine / Isolated</option>
-                        <option value="MEDICAL">Medical - Off Display</option>
-                        <option value="OFFSITE">Stored Offsite</option>
-                      </select>
-                    </div>
-                  )}
-                />
-
-                <form.Field
-                  name="gender"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Gender</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="">Unknown / Not Recorded</option><option value="M">Male</option><option value="F">Female</option><option value="U">Unsexed</option>
-                      </select>
-                    </div>
-                  )}
-                />
-
-                {renderField('date_of_birth', 'Date of Birth', 'date')}
-                
-                <div className="sm:col-span-2 pt-4 border-t border-slate-100">
-                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Profile Photo</label>
-                  <form.Field
-                    name="profile_image_url"
-                    children={(field) => (
-                      <ImageUploader value={field.state.value} onChange={(file) => field.handleChange(file as any)} requireCrop={true} aspectRatio={1} />
+                <div className="sm:col-span-2 p-5 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col gap-4">
+                  <form.Field name="record_type">
+                    {(field) => (
+                      <div>
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Record Scope</label>
+                        <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
+                          <button
+                            type="button"
+                            onClick={() => field.handleChange('INDIVIDUAL')}
+                            className={`flex-1 flex justify-center items-center gap-2 py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+                              field.state.value === 'INDIVIDUAL' ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            <User size={14} /> Individual
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => field.handleChange('GROUP')}
+                            className={`flex-1 flex justify-center items-center gap-2 py-2.5 rounded-lg text-xs font-bold uppercase tracking-widest transition-all ${
+                              field.state.value === 'GROUP' ? 'bg-blue-500 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            <Users size={14} /> Parent Group
+                          </button>
+                        </div>
+                      </div>
                     )}
-                  />
+                  </form.Field>
+
+                  <form.Subscribe selector={state => state.values.record_type}>
+                    {(recordType) => recordType === 'INDIVIDUAL' && (
+                      <div className="pt-2 border-t border-slate-200 border-dashed">
+                        <SelectInput
+                          name="parent_group_id"
+                          label="Assign to Parent Group (Optional)"
+                          options={[
+                            { value: '', label: '-- No Group Assignment --' },
+                            ...existingGroups.map((g: any) => ({ value: g.id, label: `${g.name || 'Unnamed'} (${g.species || 'Unknown'})` }))
+                          ]}
+                        />
+                      </div>
+                    )}
+                  </form.Subscribe>
                 </div>
 
-                <div className="sm:col-span-2 pt-2">
-                  {renderCheckbox('is_dob_unknown', 'Date of Birth is Approximate/Unknown')}
+                <TextInput name="name" label="Animal / Group Name" placeholder="e.g. Apollo" />
+                <TextInput name="census_count" label="Census Count (Headcount)" type="number" />
+                <TextInput name="species" label="Common Species" placeholder="e.g. Golden Eagle" />
+                <TextInput name="latin_name" label="Latin / Scientific Name" placeholder="e.g. Aquila chrysaetos" />
+                
+                <SelectInput 
+                  name="category" 
+                  label="Category" 
+                  options={[
+                    { value: 'OWL', label: 'Owl' },
+                    { value: 'RAPTOR', label: 'Raptor' },
+                    { value: 'MAMMAL', label: 'Mammal' },
+                    { value: 'EXOTIC', label: 'Exotic' }
+                  ]} 
+                />
+
+                <SelectInput 
+                  name="status" 
+                  label="Initial Status" 
+                  options={[
+                    { value: 'ON_DISPLAY', label: 'On Display' },
+                    { value: 'OFF_DISPLAY', label: 'Off Display' },
+                    { value: 'QUARANTINE', label: 'Quarantine / Isolated' },
+                    { value: 'MEDICAL', label: 'Medical - Off Display' },
+                    { value: 'OFFSITE', label: 'Stored Offsite' }
+                  ]} 
+                />
+
+                <SelectInput 
+                  name="gender" 
+                  label="Gender" 
+                  options={[
+                    { value: '', label: 'Unknown / Mixed / Not Recorded' },
+                    { value: 'M', label: 'Male' },
+                    { value: 'F', label: 'Female' },
+                    { value: 'U', label: 'Unsexed' }
+                  ]} 
+                />
+
+                <TextInput name="date_of_birth" label="Date of Birth / Est. Origin" type="date" />
+
+                <div className="sm:col-span-2 pt-4 border-t border-slate-100">
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Profile Photo (4:3)</label>
+                  <form.Field name="profile_image_url">
+                    {(field) => (
+                      <ImageUploader 
+                        value={field.state.value} 
+                        onChange={(file) => field.handleChange(file as any)} 
+                        requireCrop={true} 
+                        defaultAspect={4/3} 
+                        allowToggle={false} 
+                      />
+                    )}
+                  </form.Field>
+                </div>
+
+                <div className="sm:col-span-2">
+                  <CheckboxInput name="is_dob_unknown" label="Date of Birth is Approximate / Unknown" />
                 </div>
               </div>
             </div>
 
             <div className={activeTab === 'id' ? 'block' : 'hidden'}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                {renderField('ring_number', 'Ring Number', 'text', 'e.g. A10-992')}
-                {renderField('microchip_id', 'Microchip ID', 'text')}
-                <div className="sm:col-span-2 pt-1 pb-4 border-b border-slate-100">
-                  {renderCheckbox('has_no_id', 'Animal holds no formal identification')}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <TextInput name="ring_number" label="Ring Number" placeholder="e.g. A10-992" />
+                <TextInput name="microchip_id" label="Microchip ID" />
+                
+                <div className="sm:col-span-2 pb-4 border-b border-slate-100">
+                  <CheckboxInput name="has_no_id" label="Entity holds no formal identification" />
                 </div>
-                {renderField('flying_weight_g', 'Flying/Summer Weight', 'number', 'Weight')}
-                {renderField('winter_weight_g', 'Winter/Resting Weight', 'number', 'Weight')}
-                {renderField('average_target_weight', 'Target Average Weight', 'number', 'Weight')}
-                <form.Field
-                  name="weight_unit"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Unit of Measurement</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="g">Grams (g)</option><option value="kg">Kilograms (kg)</option>
-                      </select>
-                    </div>
-                  )}
+                
+                <TextInput name="flying_weight" label="Flying / Summer Weight" type="number" />
+                <TextInput name="winter_weight" label="Winter / Resting Weight" type="number" />
+                <TextInput name="average_target_weight" label="Target Average Weight" type="number" />
+                
+                <SelectInput 
+                  name="weight_unit" 
+                  label="Input Unit (Converted to Grams on save)" 
+                  options={[
+                    { value: 'g', label: 'Grams (g)' },
+                    { value: 'kg', label: 'Kilograms (kg)' },
+                    { value: 'oz', label: 'Ounces (oz)' },
+                    { value: 'lb', label: 'Pounds (lb)' }
+                  ]} 
                 />
               </div>
             </div>
 
             <div className={activeTab === 'husbandry' ? 'block' : 'hidden'}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <div className="sm:col-span-2">
-                  {renderCheckbox('ambient_temp_only', 'Requires Ambient Temperature Only (No localized basking)')}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <div className="sm:col-span-2 pb-4 border-b border-slate-100">
+                  <CheckboxInput name="ambient_temp_only" label="Requires Ambient Temperature Only (No localized basking)" />
                 </div>
-                {renderField('target_day_temp_c', 'Target Day Temp (°C)', 'number')}
-                {renderField('target_night_temp_c', 'Target Night Temp (°C)', 'number')}
-                {renderField('target_humidity_min_percent', 'Min Humidity (%)', 'number')}
-                {renderField('target_humidity_max_percent', 'Max Humidity (%)', 'number')}
-                {renderField('water_tipping_temp', 'Water Tipping Threshold (°C)', 'number')}
-                {renderField('misting_frequency', 'Misting Frequency', 'text', 'e.g. Twice Daily')}
+
+                <TextInput name="target_day_temp_c" label="Target Day Temp (°C)" type="number" />
+                <TextInput name="target_night_temp_c" label="Target Night Temp (°C)" type="number" />
+                <TextInput name="target_humidity_min_percent" label="Min Humidity (%)" type="number" />
+                <TextInput name="target_humidity_max_percent" label="Max Humidity (%)" type="number" />
+                <TextInput name="water_tipping_temp" label="Water Tipping Threshold (°C)" type="number" />
+                <TextInput name="misting_frequency" label="Misting Frequency" placeholder="e.g. Twice Daily" />
+                
                 <div className="sm:col-span-2">
-                  {renderField('special_requirements', 'Special Dietary or Enclosure Requirements', 'textarea', 'Detail any unique requirements...')}
+                  <TextInput name="special_requirements" label="Special Dietary or Enclosure Requirements" type="textarea" />
                 </div>
                 <div className="sm:col-span-2">
-                  {renderField('critical_husbandry_notes', 'Critical Husbandry Warnings', 'textarea', 'Detail any aggressive behaviors, stress triggers, etc...')}
+                  <TextInput name="critical_husbandry_notes" label="Critical Husbandry Warnings" type="textarea" />
                 </div>
               </div>
             </div>
 
             <div className={activeTab === 'safety' ? 'block' : 'hidden'}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                <form.Field
-                  name="hazard_rating"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Hazard Rating</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="LOW">Low Risk</option><option value="MEDIUM">Medium Risk</option><option value="HIGH">High Risk - DWA</option>
-                      </select>
-                    </div>
-                  )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                <SelectInput 
+                  name="hazard_rating" 
+                  label="Hazard Rating" 
+                  options={[
+                    { value: 'LOW', label: 'Low Risk' },
+                    { value: 'MEDIUM', label: 'Medium Risk' },
+                    { value: 'HIGH', label: 'High Risk - DWA' }
+                  ]} 
                 />
-                <form.Field
-                  name="red_list_status"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">IUCN Red List Status</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="NE">Not Evaluated (NE)</option><option value="DD">Data Deficient (DD)</option><option value="LC">Least Concern (LC)</option><option value="NT">Near Threatened (NT)</option><option value="VU">Vulnerable (VU)</option><option value="EN">Endangered (EN)</option><option value="CR">Critically Endangered (CR)</option><option value="EW">Extinct in the Wild (EW)</option>
-                      </select>
-                    </div>
-                  )}
+                
+                <SelectInput 
+                  name="red_list_status" 
+                  label="IUCN Red List Status" 
+                  options={[
+                    { value: 'NE', label: 'Not Evaluated (NE)' },
+                    { value: 'DD', label: 'Data Deficient (DD)' },
+                    { value: 'LC', label: 'Least Concern (LC)' },
+                    { value: 'NT', label: 'Near Threatened (NT)' },
+                    { value: 'VU', label: 'Vulnerable (VU)' },
+                    { value: 'EN', label: 'Endangered (EN)' },
+                    { value: 'CR', label: 'Critically Endangered (CR)' },
+                    { value: 'EW', label: 'Extinct in the Wild (EW)' }
+                  ]} 
                 />
-                <div className="sm:col-span-2 pt-2 pb-4 border-b border-slate-100">
-                  {renderCheckbox('is_venomous', 'Species is Venomous')}
+                
+                <div className="sm:col-span-2 pb-4 border-b border-slate-100">
+                  <CheckboxInput name="is_venomous" label="Species is Venomous" />
                 </div>
-                {renderField('acquisition_date', 'Acquisition Date', 'date')}
-                <form.Field
-                  name="acquisition_type"
-                  children={(field) => (
-                    <div>
-                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Acquisition Type</label>
-                      <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-900 outline-none transition-all text-sm font-medium shadow-sm">
-                        <option value="BRED">Captive Bred (Internal)</option><option value="PURCHASED">Purchased</option><option value="DONATED">Donated / Rescue</option><option value="LOAN">On Loan</option>
-                      </select>
-                    </div>
-                  )}
+                
+                <TextInput name="acquisition_date" label="Acquisition Date" type="date" />
+                
+                <SelectInput 
+                  name="acquisition_type" 
+                  label="Acquisition Type" 
+                  options={[
+                    { value: 'BRED', label: 'Captive Bred (Internal)' },
+                    { value: 'PURCHASED', label: 'Purchased' },
+                    { value: 'DONATED', label: 'Donated / Rescue' },
+                    { value: 'LOAN', label: 'On Loan' }
+                  ]} 
                 />
-                {renderField('origin', 'Breeder / Origin Source', 'text')}
-                {renderField('origin_location', 'Origin Location / Area', 'text')}
+                
+                <TextInput name="origin" label="Breeder / Origin Source" />
+                <TextInput name="origin_location" label="Origin Location / Area" />
                 
                 <div className="sm:col-span-2 pt-4 border-t border-slate-100">
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Distribution Map</label>
-                  <form.Field
-                    name="distribution_map_url"
-                    children={(field) => (
-                      <ImageUploader value={field.state.value} onChange={(file) => field.handleChange(file as any)} requireCrop={false} />
+                  <form.Field name="distribution_map_url">
+                    {(field) => (
+                      <ImageUploader 
+                        value={field.state.value} 
+                        onChange={(file) => field.handleChange(file as any)} 
+                        requireCrop={true} 
+                        defaultAspect={4/3} 
+                        allowToggle={true} 
+                      />
                     )}
-                  />
+                  </form.Field>
                 </div>
 
                 <div className="sm:col-span-2 grid grid-cols-2 gap-5 pt-2">
-                  {renderCheckbox('is_boarding', 'Currently Boarding (Not Academy Property)')}
-                  {renderCheckbox('is_quarantine', 'Requires Strict Quarantine Protocol')}
+                  <CheckboxInput name="is_boarding" label="Currently Boarding (Not KOA Property)" />
+                  <CheckboxInput name="is_quarantine" label="Requires Strict Quarantine Protocol" />
                 </div>
               </div>
             </div>
 
             <div className={activeTab === 'notes' ? 'block' : 'hidden'}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                 <div className="sm:col-span-2">
-                  {renderCheckbox('lineage_unknown', 'Lineage/Parentage is Unknown')}
+                  <CheckboxInput name="lineage_unknown" label="Lineage/Parentage is Unknown" />
                 </div>
-                <form.Subscribe
-                  selector={(state) => state.values.lineage_unknown}
-                  children={(lineage_unknown) => (
+                
+                <form.Subscribe selector={(state) => state.values.lineage_unknown}>
+                  {(lineage_unknown) => (
                     <>
-                      {renderField('sire_id', 'Sire UUID', 'text')}
-                      {renderField('dam_id', 'Dam UUID', 'text')}
+                      <TextInput name="sire_id" label="Sire UUID" />
+                      <TextInput name="dam_id" label="Dam UUID" />
                       {lineage_unknown && (
                         <div className="sm:col-span-2 mt-[-10px] text-[10px] text-amber-600 font-bold tracking-wide">
                           Warning: Parentage fields should be ignored if lineage is marked unknown.
@@ -377,11 +548,13 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
                       )}
                     </>
                   )}
-                />
+                </form.Subscribe>
+                
                 <div className="sm:col-span-2">
-                  {renderField('description', 'General Description / Public Notes', 'textarea', 'Description visible on public-facing materials...')}
+                  <TextInput name="description" label="General Description / Public Notes" type="textarea" />
                 </div>
-                {renderField('display_order', 'Display Sequence (UI Override)', 'number')}
+                
+                <TextInput name="display_order" label="Display Sequence (UI Override)" type="number" />
               </div>
             </div>
 
@@ -390,15 +563,18 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
 
         <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between bg-slate-50 shrink-0">
           <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest hidden sm:block">
-            {activeTab} module
+            {activeTab} parameters active
           </div>
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-colors">
+            <button 
+              type="button" 
+              onClick={onClose} 
+              className="w-full sm:w-auto px-5 py-2.5 text-xs font-bold uppercase tracking-widest text-slate-500 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-colors"
+            >
               Cancel
             </button>
-            <form.Subscribe
-              selector={(state) => [state.canSubmit, state.isSubmitting]}
-              children={([canSubmit, isSubmitting]) => (
+            <form.Subscribe selector={(state) => [state.canSubmit, state.isSubmitting]}>
+              {([canSubmit, isSubmitting]) => (
                 <button
                   type="submit"
                   form="animal-mutation-form"
@@ -409,7 +585,7 @@ export default function AnimalFormModal({ isOpen, onClose }: AnimalFormModalProp
                   {(isSubmitting || createAnimalMutation.isPending) ? 'Processing...' : 'Commit Record'}
                 </button>
               )}
-            />
+            </form.Subscribe>
           </div>
         </div>
 

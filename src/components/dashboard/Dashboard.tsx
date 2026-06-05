@@ -1,17 +1,20 @@
-import React, { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   createColumnHelper, 
   flexRender, 
   getCoreRowModel, 
   getSortedRowModel,
   getFilteredRowModel,
+  getExpandedRowModel,
   useReactTable,
-  SortingState
+  SortingState,
+  ExpandedState
 } from '@tanstack/react-table';
 import { 
   Search, Plus, Drumstick, ArrowUpDown, Loader2, 
-  Scale, Calendar, CheckCircle2, ThermometerSun, AlertCircle, ClipboardList, Activity
+  Scale, Calendar, CheckCircle2, ThermometerSun, AlertCircle, 
+  ClipboardList, Activity, ChevronRight, ChevronDown, Users, User
 } from 'lucide-react';
 import { Animal } from '../../types';
 import { supabase } from '../../lib/supabase';
@@ -22,12 +25,15 @@ const columnHelper = createColumnHelper<Animal>();
 const EXOTIC_CATEGORIES = ['EXOTIC'];
 
 export function Dashboard() {
+  const queryClient = useQueryClient();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
+  const [expanded, setExpanded] = useState<ExpandedState>({});
   const [activeTab, setActiveTab] = useState<string>('ALL');
   const [isCreateAnimalModalOpen, setIsCreateAnimalModalOpen] = useState(false);
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
+  // 1. DATA FETCHING (Flat Data)
   const { data: allAnimals = [], isLoading, error } = useQuery({
     queryKey: ['animals', 'dashboard'],
     queryFn: async () => {
@@ -42,48 +48,118 @@ export function Dashboard() {
     meta: { persist: true },
   });
 
-  const filteredData = useMemo(() => {
-    if (activeTab === 'ALL') return allAnimals;
-    return allAnimals.filter(animal => animal.category === activeTab);
+  // 2. REALTIME WEBSOCKET BRIDGE
+  useEffect(() => {
+    const channel = supabase
+      .channel('animals-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'animals' },
+        (payload) => {
+          console.log('Realtime change detected:', payload);
+          queryClient.invalidateQueries({ queryKey: ['animals', 'dashboard'] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
+  // 3. TREE CONSTRUCTION ENGINE (O(N) Hash Map approach)
+  const hierarchicalData = useMemo(() => {
+    // First, filter the raw data based on the active tab category
+    const categoryFiltered = activeTab === 'ALL' 
+      ? allAnimals 
+      : allAnimals.filter(animal => animal.category === activeTab);
+
+    const groups = categoryFiltered.filter(a => a.record_type === 'GROUP');
+    const individuals = categoryFiltered.filter(a => a.record_type === 'INDIVIDUAL');
+    const orphans: Animal[] = [];
+
+    // Map groups for O(1) lookup
+    const groupMap = new Map(groups.map(g => [g.id, { ...g, subRows: [] as Animal[] }]));
+
+    individuals.forEach(ind => {
+      if (ind.parent_group_id && groupMap.has(ind.parent_group_id)) {
+        groupMap.get(ind.parent_group_id)!.subRows!.push(ind);
+      } else {
+        // If an individual has no parent, or the parent was filtered out by category, they become an orphan row
+        orphans.push(ind);
+      }
+    });
+
+    return [...Array.from(groupMap.values()), ...orphans];
   }, [allAnimals, activeTab]);
 
-  const totalInView = filteredData.length;
+  const totalInView = hierarchicalData.length;
   const weighedToday = 0; 
   const fedToday = 0; 
 
   const columns = useMemo(() => {
     const baseColumns = [
       columnHelper.accessor('name', {
-        header: 'Animal Details',
-        cell: info => (
-          <div className="flex flex-col">
-            <span className="font-bold text-slate-900 text-sm">{info.getValue() || 'Unnamed'}</span>
-            <span className="text-xs text-slate-500">{info.row.original.species}</span>
-          </div>
-        ),
+        header: 'Entity Details',
+        cell: info => {
+          const isGroup = info.row.original.record_type === 'GROUP';
+          const canExpand = info.row.getCanExpand();
+          
+          return (
+            <div 
+              className="flex items-center gap-3" 
+              style={{ paddingLeft: `${info.row.depth * 1.5}rem` }}
+            >
+              <div className="flex items-center justify-center w-5">
+                {canExpand ? (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      info.row.toggleExpanded();
+                    }} 
+                    className="cursor-pointer text-slate-400 hover:text-slate-900 transition-colors p-1 rounded hover:bg-slate-200"
+                  >
+                    {info.row.getIsExpanded() ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                  </button>
+                ) : null}
+              </div>
+              
+              <div className={`p-1.5 rounded-lg shrink-0 ${isGroup ? 'bg-blue-50 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                {isGroup ? <Users size={14} /> : <User size={14} />}
+              </div>
+              
+              <div className="flex flex-col">
+                <span className="font-bold text-slate-900 text-sm leading-tight">
+                  {info.getValue() || (isGroup ? 'Unnamed Group' : 'Unnamed Animal')}
+                </span>
+                <span className="text-xs text-slate-500 font-medium">{info.row.original.species || 'Unknown Species'}</span>
+              </div>
+            </div>
+          );
+        },
       }),
     ];
 
     if (EXOTIC_CATEGORIES.includes(activeTab)) {
       return [
         ...baseColumns,
-        columnHelper.accessor('species', {
-          header: 'Species',
-          cell: info => <span className="text-xs text-slate-600 font-medium">{info.getValue()}</span>,
-        }),
-        columnHelper.accessor('flying_weight_g', {
+        columnHelper.accessor('flying_weight', {
           header: 'Weight',
-          cell: info => (
-            <span className="text-sm font-medium text-slate-700 flex items-center gap-1">
-              <Scale size={12} className="text-slate-400" />
-              {info.getValue() ? `${info.getValue()}g` : '--'}
-            </span>
-          ),
+          cell: info => {
+            const weight = info.getValue();
+            if (!weight && info.row.original.record_type === 'GROUP') return <span className="text-[10px] text-slate-400 font-medium">N/A (Group)</span>;
+            return (
+              <span className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                <Scale size={12} className="text-slate-400" />
+                {weight ? `${weight}g` : '--'}
+              </span>
+            );
+          },
         }),
         columnHelper.display({
           id: 'last_feed',
           header: 'Last Feed',
-          cell: () => <span className="text-xs text-slate-400 italic">Pending Logs</span>,
+          cell: () => <span className="text-[10px] text-slate-400 italic font-medium uppercase tracking-widest">Pending Logs</span>,
         }),
         columnHelper.accessor('next_feed_date', {
           header: 'Next Feed',
@@ -91,7 +167,7 @@ export function Dashboard() {
             const date = info.getValue();
             if (!date) return <span className="text-slate-400">-</span>;
             return (
-              <span className="font-bold text-slate-800 text-xs uppercase tracking-tight flex items-center gap-1">
+              <span className="font-bold text-slate-800 text-xs uppercase tracking-tight flex items-center gap-1.5">
                 <Drumstick size={12} className="text-amber-500" />
                 {new Date(date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
               </span>
@@ -112,7 +188,7 @@ export function Dashboard() {
                   {ambient ? 'Ambient:' : 'Basking:'} {day}°C
                 </span>
                 {!ambient && night && (
-                  <span className="text-[10px] text-blue-600 font-medium tracking-wide">
+                  <span className="text-[10px] text-blue-600 font-bold tracking-wide uppercase">
                     Night: {night}°C
                   </span>
                 )}
@@ -125,18 +201,23 @@ export function Dashboard() {
 
     return [
       ...baseColumns,
-      columnHelper.accessor('flying_weight_g', {
-        header: 'Weight',
+      columnHelper.accessor('flying_weight', {
+        header: 'Weight Matrix',
         cell: info => {
           const weight = info.getValue();
           const target = info.row.original.average_target_weight;
+          
+          if (!weight && !target && info.row.original.record_type === 'GROUP') {
+            return <span className="text-[10px] text-slate-400 font-medium uppercase tracking-widest">N/A (Group Level)</span>;
+          }
+
           return (
-            <div className="flex flex-col">
-              <span className="text-sm font-medium text-slate-700 flex items-center gap-1">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
                 <Scale size={12} className="text-slate-400" />
                 {weight ? `${weight}g` : '--'}
               </span>
-              {target && <span className="text-[10px] text-slate-400">Target: {target}g</span>}
+              {target && <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Target: {target}g</span>}
             </div>
           );
         },
@@ -160,9 +241,11 @@ export function Dashboard() {
               <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border ${colorClass}`}>
                 {displayLabel}
               </span>
-              <span className="text-[10px] text-slate-400 uppercase tracking-wider mt-0.5">
-                {info.row.original.ring_number || info.row.original.microchip_id || 'NO ID'}
-              </span>
+              {info.row.original.record_type === 'INDIVIDUAL' && (
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
+                  {info.row.original.ring_number || info.row.original.microchip_id || 'NO ID'}
+                </span>
+              )}
             </div>
           );
         },
@@ -175,7 +258,7 @@ export function Dashboard() {
           
           return (
             <div className="flex flex-col gap-0.5">
-              <span className="font-bold text-slate-800 text-xs uppercase tracking-tight flex items-center gap-1">
+              <span className="font-bold text-slate-800 text-xs uppercase tracking-tight flex items-center gap-1.5">
                 <Drumstick size={12} className="text-amber-500" />
                 {new Date(date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
               </span>
@@ -190,14 +273,17 @@ export function Dashboard() {
   }, [activeTab]);
 
   const table = useReactTable({
-    data: filteredData,
+    data: hierarchicalData,
     columns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, expanded },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onExpandedChange: setExpanded,
+    getSubRows: row => (row.subRows && row.subRows.length > 0 ? row.subRows : undefined),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
   });
 
   const categories = ['ALL', 'OWL', 'RAPTOR', 'MAMMAL', 'EXOTIC', 'ARCHIVED'];
@@ -205,10 +291,11 @@ export function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       
+      {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Dashboard</h1>
-          <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mt-1">
+          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
             Real-time husbandry overview
           </p>
         </div>
@@ -220,7 +307,7 @@ export function Dashboard() {
               type="date" 
               value={viewDate}
               onChange={e => setViewDate(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm"
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm"
             />
           </div>
 
@@ -230,69 +317,70 @@ export function Dashboard() {
               type="text" 
               value={globalFilter ?? ''}
               onChange={e => setGlobalFilter(e.target.value)}
-              placeholder="Search by name, ID, species..." 
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm"
+              placeholder="Search entities, IDs, species..." 
+              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all shadow-sm"
             />
           </div>
           
           <button 
             onClick={() => setIsCreateAnimalModalOpen(true)}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(16,185,129,0.15)] shrink-0"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(16,185,129,0.15)] shrink-0"
           >
-            <Plus size={16} />
-            Add Animal
+            <Plus size={16} /> Add Record
           </button>
         </div>
       </div>
 
+      {/* Analytics Widgets */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-48">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
               <ClipboardList size={18} />
             </div>
             <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Active Tasks</h2>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-             <CheckCircle2 size={32} className="mb-2 opacity-20" />
-             <p className="text-xs font-bold uppercase tracking-widest">No pending tasks</p>
+             <CheckCircle2 size={32} className="mb-3 opacity-20" />
+             <p className="text-[10px] font-black uppercase tracking-widest">No pending tasks</p>
           </div>
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-48">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="p-2 bg-rose-50 text-rose-600 rounded-lg">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-rose-50 text-rose-600 rounded-xl border border-rose-100">
               <Activity size={18} />
             </div>
             <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest">Health & Medical</h2>
           </div>
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-             <AlertCircle size={32} className="mb-2 opacity-20" />
-             <p className="text-xs font-bold uppercase tracking-widest">No active medical alerts</p>
+             <AlertCircle size={32} className="mb-3 opacity-20" />
+             <p className="text-[10px] font-black uppercase tracking-widest">No active medical alerts</p>
           </div>
         </div>
       </div>
 
-      <div className="space-y-3">
+      {/* Category Navigation & Micro-Stats */}
+      <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg"><Scale size={16} /></div>
+          <div className="bg-white px-5 py-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100"><Scale size={18} /></div>
               <div>
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Weighed Today</p>
-                <p className="text-lg font-black text-slate-900 leading-none mt-1">
-                  {weighedToday} <span className="text-sm text-slate-400 font-medium">/ {totalInView}</span>
+                <p className="text-xl font-black text-slate-900 leading-none mt-1.5">
+                  {weighedToday} <span className="text-xs text-slate-400 font-bold uppercase tracking-widest ml-1">/ {totalInView}</span>
                 </p>
               </div>
             </div>
           </div>
-          <div className="bg-white px-4 py-3 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-50 text-amber-600 rounded-lg"><Drumstick size={16} /></div>
+          <div className="bg-white px-5 py-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-amber-50 text-amber-600 rounded-xl border border-amber-100"><Drumstick size={18} /></div>
               <div>
                 <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Fed Today</p>
-                <p className="text-lg font-black text-slate-900 leading-none mt-1">
-                  {fedToday} <span className="text-sm text-slate-400 font-medium">/ {totalInView}</span>
+                <p className="text-xl font-black text-slate-900 leading-none mt-1.5">
+                  {fedToday} <span className="text-xs text-slate-400 font-bold uppercase tracking-widest ml-1">/ {totalInView}</span>
                 </p>
               </div>
             </div>
@@ -304,7 +392,7 @@ export function Dashboard() {
             <button
               key={category}
               onClick={() => setActiveTab(category)}
-              className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all whitespace-nowrap ${
+              className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap ${
                 activeTab === category 
                   ? 'bg-emerald-50 text-emerald-600 border border-emerald-200 shadow-sm' 
                   : 'bg-white text-slate-500 border border-slate-200 hover:text-slate-700 hover:bg-slate-50'
@@ -316,15 +404,17 @@ export function Dashboard() {
         </div>
       </div>
 
+      {/* TanStack Data Table */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {error ? (
-          <div className="p-8 text-center text-rose-600 bg-rose-50 font-medium">
+          <div className="p-10 text-center text-rose-600 bg-rose-50 font-bold flex flex-col items-center gap-3">
+            <AlertCircle size={24} />
             Connection error: Ensure your database environment variables are set correctly and RLS policies allow read access.
           </div>
         ) : isLoading ? (
-          <div className="h-64 flex flex-col items-center justify-center gap-3">
-            <Loader2 size={24} className="text-emerald-500 animate-spin" />
-            <span className="text-xs font-black uppercase tracking-widest text-slate-500">Synchronizing with Server...</span>
+          <div className="h-64 flex flex-col items-center justify-center gap-4">
+            <Loader2 size={28} className="text-emerald-500 animate-spin" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Synchronizing with Cache...</span>
           </div>
         ) : (
           <div className="w-full overflow-x-auto custom-scrollbar">
@@ -353,17 +443,20 @@ export function Dashboard() {
               <tbody className="divide-y divide-slate-100">
                 {table.getRowModel().rows.length === 0 ? (
                   <tr>
-                    <td colSpan={columns.length} className="px-6 py-16 text-center">
+                    <td colSpan={columns.length} className="px-6 py-20 text-center">
                       <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-slate-50 border border-slate-200 mb-4 shadow-inner">
                         <Scale size={24} className="text-slate-400" />
                       </div>
                       <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">No Records Found</h3>
-                      <p className="text-xs font-bold text-slate-500 mt-2">No animals match this category filter.</p>
+                      <p className="text-xs font-bold text-slate-500 mt-2">No entities match this category filter.</p>
                     </td>
                   </tr>
                 ) : (
                   table.getRowModel().rows.map(row => (
-                    <tr key={row.id} className="hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <tr 
+                      key={row.id} 
+                      className={`transition-colors group hover:bg-slate-50 ${row.original.record_type === 'GROUP' ? 'bg-slate-50/50' : 'bg-white'}`}
+                    >
                       {row.getVisibleCells().map(cell => (
                         <td key={cell.id} className="px-6 py-4 whitespace-nowrap">
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
