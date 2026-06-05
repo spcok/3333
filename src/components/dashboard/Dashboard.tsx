@@ -19,6 +19,7 @@ import {
 import { Animal } from '../../types';
 import { supabase } from '../../lib/supabase';
 import AnimalFormModal from '../animals/AnimalFormModal';
+import { AnimalProfile } from '../animals/AnimalProfile';
 
 const columnHelper = createColumnHelper<Animal>();
 
@@ -31,6 +32,7 @@ export function Dashboard() {
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const [activeTab, setActiveTab] = useState<string>('ALL');
   const [isCreateAnimalModalOpen, setIsCreateAnimalModalOpen] = useState(false);
+  const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   // 1. DATA FETCHING (Flat Data)
@@ -69,23 +71,21 @@ export function Dashboard() {
 
   // 3. TREE CONSTRUCTION ENGINE (O(N) Hash Map approach)
   const hierarchicalData = useMemo(() => {
-    // First, filter the raw data based on the active tab category
     const categoryFiltered = activeTab === 'ALL' 
       ? allAnimals 
       : allAnimals.filter(animal => animal.category === activeTab);
 
+    // FIX: Catch legacy data by treating null/undefined as INDIVIDUAL
     const groups = categoryFiltered.filter(a => a.record_type === 'GROUP');
-    const individuals = categoryFiltered.filter(a => a.record_type === 'INDIVIDUAL');
+    const individuals = categoryFiltered.filter(a => a.record_type === 'INDIVIDUAL' || !a.record_type);
     const orphans: Animal[] = [];
 
-    // Map groups for O(1) lookup
     const groupMap = new Map(groups.map(g => [g.id, { ...g, subRows: [] as Animal[] }]));
 
     individuals.forEach(ind => {
       if (ind.parent_group_id && groupMap.has(ind.parent_group_id)) {
         groupMap.get(ind.parent_group_id)!.subRows!.push(ind);
       } else {
-        // If an individual has no parent, or the parent was filtered out by category, they become an orphan row
         orphans.push(ind);
       }
     });
@@ -97,6 +97,7 @@ export function Dashboard() {
   const weighedToday = 0; 
   const fedToday = 0; 
 
+  // 4. TABLE COLUMNS
   const columns = useMemo(() => {
     const baseColumns = [
       columnHelper.accessor('name', {
@@ -128,10 +129,13 @@ export function Dashboard() {
                 {isGroup ? <Users size={14} /> : <User size={14} />}
               </div>
               
-              <div className="flex flex-col">
-                <span className="font-bold text-slate-900 text-sm leading-tight">
+              <div className="flex flex-col items-start">
+                <button 
+                  onClick={() => setSelectedAnimalId(info.row.original.id)}
+                  className="font-bold text-slate-900 text-sm leading-tight hover:text-emerald-600 hover:underline text-left transition-colors"
+                >
                   {info.getValue() || (isGroup ? 'Unnamed Group' : 'Unnamed Animal')}
-                </span>
+                </button>
                 <span className="text-xs text-slate-500 font-medium">{info.row.original.species || 'Unknown Species'}</span>
               </div>
             </div>
@@ -272,6 +276,7 @@ export function Dashboard() {
     ];
   }, [activeTab]);
 
+  // 5. TABLE INSTANCE
   const table = useReactTable({
     data: hierarchicalData,
     columns,
@@ -291,7 +296,6 @@ export function Dashboard() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       
-      {/* Top Action Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-slate-900 tracking-tight">Dashboard</h1>
@@ -331,7 +335,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Analytics Widgets */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex flex-col h-48">
           <div className="flex items-center gap-3 mb-4">
@@ -360,7 +363,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Category Navigation & Micro-Stats */}
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="bg-white px-5 py-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between">
@@ -404,7 +406,6 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* TanStack Data Table */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {error ? (
           <div className="p-10 text-center text-rose-600 bg-rose-50 font-bold flex flex-col items-center gap-3">
@@ -470,6 +471,13 @@ export function Dashboard() {
           </div>
         )}
       </div>
+
+      {selectedAnimalId && (
+        <AnimalProfile 
+          animalId={selectedAnimalId} 
+          onClose={() => setSelectedAnimalId(null)} 
+        />
+      )}
 
       {isCreateAnimalModalOpen && (
         <AnimalFormModal 
