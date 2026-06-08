@@ -22,7 +22,6 @@ import AnimalFormModal from '../animals/AnimalFormModal';
 import { AnimalProfile } from '../animals/AnimalProfile';
 
 const columnHelper = createColumnHelper<Animal>();
-
 const EXOTIC_CATEGORIES = ['EXOTIC'];
 
 export function Dashboard() {
@@ -35,7 +34,6 @@ export function Dashboard() {
   const [selectedAnimalId, setSelectedAnimalId] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
-  // 1. DATA FETCHING (Flat Data)
   const { data: allAnimals = [], isLoading, error } = useQuery({
     queryKey: ['animals', 'dashboard'],
     queryFn: async () => {
@@ -50,7 +48,10 @@ export function Dashboard() {
     meta: { persist: true },
   });
 
-  // 2. REALTIME WEBSOCKET BRIDGE
+  const selectedAnimal = useMemo(() => {
+    return selectedAnimalId ? allAnimals.find(a => a.id === selectedAnimalId) || null : null;
+  }, [allAnimals, selectedAnimalId]);
+
   useEffect(() => {
     const channel = supabase
       .channel('animals-changes')
@@ -69,15 +70,23 @@ export function Dashboard() {
     };
   }, [queryClient]);
 
-  // 3. TREE CONSTRUCTION ENGINE (O(N) Hash Map approach)
+  // TREE CONSTRUCTION ENGINE (Archive Segregation logic)
   const hierarchicalData = useMemo(() => {
-    const categoryFiltered = activeTab === 'ALL' 
-      ? allAnimals 
-      : allAnimals.filter(animal => animal.category === activeTab);
+    let baseData = allAnimals;
 
-    // FIX: Catch legacy data by treating null/undefined as INDIVIDUAL
-    const groups = categoryFiltered.filter(a => a.record_type === 'GROUP');
-    const individuals = categoryFiltered.filter(a => a.record_type === 'INDIVIDUAL' || !a.record_type);
+    if (activeTab === 'ARCHIVED') {
+      // ONLY show archived records
+      baseData = allAnimals.filter(a => a.status === 'ARCHIVED');
+    } else if (activeTab === 'ALL') {
+      // Show everything EXCEPT archived records
+      baseData = allAnimals.filter(a => a.status !== 'ARCHIVED');
+    } else {
+      // Filter by Category AND ensure it is not archived
+      baseData = allAnimals.filter(a => a.category === activeTab && a.status !== 'ARCHIVED');
+    }
+
+    const groups = baseData.filter(a => a.record_type === 'GROUP');
+    const individuals = baseData.filter(a => a.record_type === 'INDIVIDUAL' || !a.record_type);
     const orphans: Animal[] = [];
 
     const groupMap = new Map(groups.map(g => [g.id, { ...g, subRows: [] as Animal[] }]));
@@ -97,7 +106,6 @@ export function Dashboard() {
   const weighedToday = 0; 
   const fedToday = 0; 
 
-  // 4. TABLE COLUMNS
   const columns = useMemo(() => {
     const baseColumns = [
       columnHelper.accessor('name', {
@@ -239,6 +247,7 @@ export function Dashboard() {
           else if (status === 'QUARANTINE') { colorClass = 'bg-amber-50 text-amber-700 border-amber-200'; displayLabel = 'QUARANTINE'; }
           else if (status === 'OFF_DISPLAY') { colorClass = 'bg-slate-100 text-slate-600 border-slate-300'; displayLabel = 'OFF DISPLAY'; }
           else if (status === 'OFFSITE') { colorClass = 'bg-blue-50 text-blue-700 border-blue-200'; displayLabel = 'OFFSITE'; }
+          else if (status === 'ARCHIVED') { colorClass = 'bg-slate-800 text-slate-300 border-slate-600'; displayLabel = 'ARCHIVED'; }
           
           return (
             <div className="flex flex-col items-start gap-1">
@@ -276,7 +285,6 @@ export function Dashboard() {
     ];
   }, [activeTab]);
 
-  // 5. TABLE INSTANCE
   const table = useReactTable({
     data: hierarchicalData,
     columns,
@@ -328,7 +336,7 @@ export function Dashboard() {
           
           <button 
             onClick={() => setIsCreateAnimalModalOpen(true)}
-            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(16,185,129,0.15)] shrink-0"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-50 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-[0_0_15px_rgba(16,185,129,0.15)] shrink-0"
           >
             <Plus size={16} /> Add Record
           </button>
@@ -472,9 +480,9 @@ export function Dashboard() {
         )}
       </div>
 
-      {selectedAnimalId && (
+      {selectedAnimal && (
         <AnimalProfile 
-          animalId={selectedAnimalId} 
+          animal={selectedAnimal} 
           onClose={() => setSelectedAnimalId(null)} 
         />
       )}
