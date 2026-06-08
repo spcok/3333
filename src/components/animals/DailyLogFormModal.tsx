@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from '@tanstack/react-form';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, Save, Loader2, AlertCircle, Plus, Trash2, Scale, Utensils, Thermometer } from 'lucide-react';
+import { X, Save, Loader2, AlertCircle, Plus, Trash2, Scale, Utensils, Thermometer, Clock } from 'lucide-react';
 import { dailyLogService } from '../../services/dailyLogService';
 import { Animal, DailyLog } from '../../types';
 
@@ -25,8 +25,6 @@ interface MealInputRow {
 export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initialLogData }: DailyLogFormModalProps) {
   const queryClient = useQueryClient();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // Local state for handling multiple dynamic meal lines simultaneously inside the form
   const [mealsList, setMealsList] = useState<MealInputRow[]>([]);
 
   useEffect(() => {
@@ -112,7 +110,6 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
 
   const logMutation = useMutation({
     mutationFn: async (value: any) => {
-      // Build a strict ISO timestamp by combining the selected date and the specific log time input
       const combinedTimestamp = new Date(`${value.log_date}T${value.log_time || '12:00'}:00`).toISOString();
       let finalWeightGrams: number | null = null;
 
@@ -135,7 +132,6 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
       }
 
       if (mode === 'FEEDING') {
-        // Enforce batch mapping of the array rows directly into the feed_details structure
         const formattedMeals = mealsList.map(m => ({
           time: new Date(`${value.log_date}T${m.time}:00`).toISOString(),
           food_item: m.food_item,
@@ -144,7 +140,6 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
           calci_dust_added: m.calci_dust_added
         }));
 
-        // Determine if we overwrite or merge logs seamlessly
         if (initialLogData?.id) {
           return await dailyLogService.updateLogDirect(initialLogData.id, {
             feed_details: { meals: formattedMeals },
@@ -152,29 +147,13 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
             log_date: combinedTimestamp
           });
         } else {
-          // Additive merge approach using master collection pipeline
-          const targetDate = value.log_date;
-          const { data: existingLog } = await supabase
-            .from('daily_logs')
-            .select('*')
-            .eq('animal_id', animal.id)
-            .eq('is_deleted', false)
-            .gte('log_date', `${targetDate}T00:00:00.000Z`)
-            .lte('log_date', `${targetDate}T23:59:59.999Z`)
-            .maybeSingle();
-
-          let compositeMeals = [...formattedMeals];
-          if (existingLog?.feed_details?.meals) {
-            compositeMeals = [...existingLog.feed_details.meals, ...formattedMeals];
-          }
-
           return await dailyLogService.commitLog({
             animal_id: animal.id,
             log_type: 'FEEDING',
             log_date: combinedTimestamp,
             notes: value.notes || null,
-            feed_details: { meals: compositeMeals }
-          } as any);
+            feed_details: { meals: formattedMeals }
+          });
         }
       }
 
@@ -254,7 +233,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
               value={field.state.value as string}
               onChange={(e) => field.handleChange(e.target.value as any)}
               placeholder={placeholder}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium shadow-sm h-20"
+              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium shadow-inner h-20"
             />
           ) : (
             <input
@@ -262,7 +241,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
               value={field.state.value as any}
               onChange={(e) => field.handleChange(type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) as any : e.target.value as any)}
               placeholder={placeholder}
-              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium shadow-sm"
+              className="w-full p-2.5 bg-white border border-slate-200 rounded-xl outline-none text-sm font-medium shadow-inner"
             />
           )}
         </div>
@@ -303,7 +282,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
               {mode !== 'FEEDING' && <TextInput name="log_time" label="Time of Log (HH:MM)" type="time" />}
             </div>
 
-            {/* 1. WEIGHT BLOCK */}
+            {/* 1. WEIGHT SECTION (INCLUDES HIGH RESOLUTION TIMESTAMPS) */}
             {mode === 'WEIGHT' && (
               <div className="space-y-4">
                 <form.Subscribe selector={(state) => state.values.weight_not_required}>
@@ -317,7 +296,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
                             {(field) => (
                               <div className="flex flex-col gap-1.5">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Eighths</label>
-                                <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold">
+                                <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold shadow-sm">
                                   {[0,1,2,3,4,5,6,7].map(n => <option key={n} value={n}>{n}/8</option>)}
                                 </select>
                               </div>
@@ -333,7 +312,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
                             {(field) => (
                               <div className="flex flex-col gap-1.5">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Eighths</label>
-                                <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold">
+                                <select value={field.state.value} onChange={(e) => field.handleChange(e.target.value)} className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold shadow-sm">
                                   {[0,1,2,3,4,5,6,7].map(n => <option key={n} value={n}>{n}/8</option>)}
                                 </select>
                               </div>
@@ -362,21 +341,21 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
               </div>
             )}
 
-            {/* 2. TEMPERATURE BLOCK (STRICT AMBIENT ONLY MASK ENGINE) */}
+            {/* 2. TEMPERATURE SECTION (PROFILE MASK CONFIGURED) */}
             {mode === 'TEMPERATURE' && (
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
                 {animal.ambient_temp_only ? (
-                  <TextInput name="temperature_c" label="Ambient Temperature (°C)" type="number" />
+                  <TextInput name="temperature_c" label="Ambient Enclosure Temperature (°C)" type="number" />
                 ) : (
                   <div className="grid grid-cols-2 gap-4">
-                    <TextInput name="basking_temp_c" label="Basking Temperature (°C)" type="number" />
-                    <TextInput name="cool_temp_c" label="Cool / Escape Temperature (°C)" type="number" />
+                    <TextInput name="basking_temp_c" label="Basking Spot Temperature (°C)" type="number" />
+                    <TextInput name="cool_temp_c" label="Cool Zone / Escape Temperature (°C)" type="number" />
                   </div>
                 )}
               </div>
             )}
 
-            {/* 3. MULTI-FEEDING LIST INLINE BLOCK */}
+            {/* 3. MULTI-FEEDING COMPOSITE GRID LAYOUT */}
             {mode === 'FEEDING' && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
@@ -392,7 +371,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
 
                 <div className="space-y-3 max-h-[260px] overflow-y-auto custom-scrollbar pr-1">
                   {mealsList.map((meal, index) => (
-                    <div key={meal.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl relative space-y-3 shadow-inner">
+                    <div key={meal.id} className="p-4 bg-slate-50 border border-slate-200 rounded-2xl relative space-y-3">
                       {mealsList.length > 1 && (
                         <button
                           type="button"
@@ -409,7 +388,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
                           <input type="text" value={meal.food_item} onChange={(e) => updateMealRow(meal.id, 'food_item', e.target.value)} placeholder="e.g. DOC" className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none shadow-sm" />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Time</label>
+                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Feed Time</label>
                           <input type="time" value={meal.time} onChange={(e) => updateMealRow(meal.id, 'time', e.target.value)} className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none shadow-sm" />
                         </div>
                       </div>
@@ -436,7 +415,7 @@ export default function DailyLogFormModal({ isOpen, onClose, animal, mode, initi
             )}
 
             <div className="pt-2 border-t border-slate-100 border-dashed">
-              <TextInput name="notes" label="Observation / Clinical Logs notes" type="textarea" placeholder="Enter notes here..." />
+              <TextInput name="notes" label="Observation / Treatment Notes" type="textarea" placeholder="Enter notes here..." />
             </div>
 
           </form>

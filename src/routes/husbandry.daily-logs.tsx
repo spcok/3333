@@ -3,7 +3,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import { 
   ClipboardList, Scale, Thermometer, Utensils, 
-  ChevronLeft, ChevronRight, Plus, Edit3, Loader2, AlertCircle, Sparkles
+  ChevronLeft, ChevronRight, Plus, Edit3, Loader2, AlertCircle 
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { dailyLogService } from '../services/dailyLogService';
@@ -14,12 +14,13 @@ export const Route = createFileRoute('/husbandry/daily-logs')({
   component: DailyLogsPage,
 });
 
+// MANDATE MATCH: Strictly exact custom strings configured for button controls
 const SECTION_BAR = [
-  { id: 'ALL', label: 'All Sections' },
-  { id: 'OWL', label: 'Owls Only' },
-  { id: 'RAPTOR', label: 'Raptors Only' },
-  { id: 'MAMMAL', label: 'Mammals' },
-  { id: 'EXOTIC', label: 'Exotics' }
+  { id: 'ALL', label: 'All' },
+  { id: 'OWL', label: 'Owls' },
+  { id: 'RAPTOR', label: 'Raptors' },
+  { id: 'MAMMAL', label: 'Mammal' },
+  { id: 'EXOTIC', label: 'Exotic' }
 ] as const;
 
 export function DailyLogsPage() {
@@ -40,7 +41,6 @@ export function DailyLogsPage() {
     initialData: undefined,
   });
 
-  // 1. Fetch live master animal inventory
   const { data: animals = [], isLoading: loadingAnimals } = useQuery({
     queryKey: ['animals', 'dashboard'],
     queryFn: async () => {
@@ -54,7 +54,6 @@ export function DailyLogsPage() {
     staleTime: Infinity,
   });
 
-  // 2. Fetch specific logs mapping exactly to selected calendar day
   const { data: todaysLogs = [], isLoading: loadingLogs, error: logsError } = useQuery({
     queryKey: ['daily_logs', 'date-view', selectedDate],
     queryFn: async () => {
@@ -69,9 +68,7 @@ export function DailyLogsPage() {
     }
   });
 
-  // 3. Section Selectors Filter Logic Matrix
   const filteredWorksheetRecords = useMemo(() => {
-    // Exclude archived and ensure category matches selection if section toolbar active
     const cleanAnimals = animals.filter(a => {
       if (a.status === 'ARCHIVED') return false;
       if (activeSection === 'ALL') return true;
@@ -104,7 +101,6 @@ export function DailyLogsPage() {
     });
   };
 
-  // Helper: Display weight dynamically converted into fractional strings if falconry system flagged
   const renderWorksheetWeight = (grams: number | null, preferredUnit: string | null) => {
     if (!grams) return null;
     const totalOz = grams / 28.3495;
@@ -130,24 +126,23 @@ export function DailyLogsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       
-      {/* Top Controls Container */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Daily Log</h1>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Husbandry Entry Sheet</h1>
           <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
-            Realtime tablet worksheet workflow
+            Day-To-Day Husbandry Logs Entry Matrix
           </p>
         </div>
         
         <div className="flex flex-col sm:flex-row items-center gap-4 self-center md:self-auto w-full sm:w-auto">
-          {/* Section Selector Toolbar Component */}
+          {/* Customized Section Selection Grid */}
           <div className="flex gap-1 bg-slate-100 p-1 border rounded-xl shadow-inner overflow-x-auto w-full sm:w-auto custom-scrollbar">
             {SECTION_BAR.map(btn => (
               <button
                 key={btn.id}
                 type="button"
                 onClick={() => setActiveSection(btn.id)}
-                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${
+                className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all ${
                   activeSection === btn.id 
                     ? 'bg-white text-slate-900 shadow-sm border border-slate-200/60' 
                     : 'text-slate-500 hover:text-slate-800'
@@ -158,7 +153,6 @@ export function DailyLogsPage() {
             ))}
           </div>
 
-          {/* Date Slider Component */}
           <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200 shadow-inner w-full sm:w-auto justify-between sm:justify-start">
             <button onClick={() => shiftDate(-1)} className="p-2 text-slate-600 hover:bg-white hover:text-slate-900 rounded-lg transition-all shadow-sm">
               <ChevronLeft size={14} />
@@ -176,7 +170,6 @@ export function DailyLogsPage() {
         </div>
       </div>
 
-      {/* Main worksheet Table Matrix */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {logsError ? (
           <div className="p-10 text-center text-rose-600 bg-rose-50 font-bold flex flex-col items-center gap-3">
@@ -210,24 +203,23 @@ export function DailyLogsPage() {
                 ) : (
                   filteredWorksheetRecords.map(({ animal, log }) => {
                     const meals = log?.feed_details?.meals || [];
+                    const logTimeStr = log?.log_date ? new Date(log.log_date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '';
                     
                     return (
                       <tr key={animal.id} className="hover:bg-slate-50/40 transition-colors group">
                         
-                        {/* 1. Animal Details */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex flex-col">
                             <span className="font-black text-slate-900 text-sm leading-tight">{animal.name}</span>
                             <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mt-1">
-                              {animal.species} ({animal.weight_unit || 'g'})
+                              {animal.species}
                             </span>
                           </div>
                         </td>
 
-                        {/* 2. Isolated Weight Block Trigger */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <button
-                            type="button; "
+                            type="button"
                             onClick={() => triggerLogForm(animal, 'WEIGHT', log)}
                             className={`w-full min-h-[46px] p-2 rounded-xl border border-dashed text-center flex flex-col justify-center items-center transition-all ${
                               log?.weight_not_required
@@ -242,7 +234,7 @@ export function DailyLogsPage() {
                             ) : log?.weight_grams ? (
                               <>
                                 <span className="text-sm font-black tracking-tight">{renderWorksheetWeight(log.weight_grams, animal.weight_unit)}</span>
-                                <span className="text-[8px] font-black uppercase tracking-widest text-emerald-500 mt-0.5">Modify</span>
+                                <span className="text-[8px] text-slate-400 font-bold mt-0.5">Logged: {logTimeStr}</span>
                               </>
                             ) : (
                               <>
@@ -253,7 +245,6 @@ export function DailyLogsPage() {
                           </button>
                         </td>
 
-                        {/* 3. Isolated Temperature Block Trigger */}
                         <td className="px-6 py-4 whitespace-nowrap">
                           <button
                             type="button"
@@ -266,9 +257,14 @@ export function DailyLogsPage() {
                           >
                             {log?.temperature_c || log?.basking_temp_c || log?.cool_temp_c ? (
                               <div className="w-full space-y-0.5 font-bold text-[9px] tracking-tight">
-                                {log.temperature_c && <div className="flex justify-between text-slate-600"><span>Amb:</span><span>{log.temperature_c}°C</span></div>}
-                                {log.basking_temp_c && <div className="flex justify-between text-orange-600 font-black"><span>Bask:</span><span>{log.basking_temp_c}°C</span></div>}
-                                {log.cool_temp_c && <div className="flex justify-between text-blue-600"><span>Cool:</span><span>{log.cool_temp_c}°C</span></div>}
+                                {animal.ambient_temp_only ? (
+                                  log.temperature_c && <div className="flex justify-between text-slate-600"><span>Amb:</span><span>{log.temperature_c}°C</span></div>
+                                ) : (
+                                  <>
+                                    {log.basking_temp_c && <div className="flex justify-between text-orange-600 font-black"><span>Bask:</span><span>{log.basking_temp_c}°C</span></div>}
+                                    {log.cool_temp_c && <div className="flex justify-between text-blue-600"><span>Cool:</span><span>{log.cool_temp_c}°C</span></div>}
+                                  </>
+                                )}
                               </div>
                             ) : (
                               <>
@@ -279,7 +275,6 @@ export function DailyLogsPage() {
                           </button>
                         </td>
 
-                        {/* 4. Isolated Additive Meal Logging Array Block */}
                         <td className="px-6 py-4">
                           <div className="flex flex-col gap-2">
                             {meals.length > 0 && (
@@ -291,14 +286,15 @@ export function DailyLogsPage() {
                                     className="bg-amber-50/60 border border-amber-200/70 p-2 rounded-xl text-[10px] flex flex-col gap-0.5 shadow-sm cursor-pointer hover:bg-amber-100/50 transition-colors"
                                   >
                                     <div className="flex justify-between font-black text-slate-800 tracking-tight">
-                                      <span>{meal.food_item || 'Diet Allocation'}</span>
-                                      <span className="text-slate-400">
+                                      <span>{meal.food_item || 'Diet Apportion'}</span>
+                                      <span className="text-amber-700 font-bold">
                                         {new Date(meal.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                                       </span>
                                     </div>
                                     <div className="text-slate-500 font-bold tracking-tight">
                                       Offered: {meal.food_offered_g}g | Consumed: <span className="text-emerald-600 font-black">{meal.food_consumed_g}g</span>
                                     </div>
+                                    {meal.calci_dust_added && <span className="text-[8px] font-black uppercase tracking-widest text-amber-700 mt-0.5">Calci-Dust</span>}
                                   </div>
                                 ))}
                               </div>
@@ -313,14 +309,12 @@ export function DailyLogsPage() {
                           </div>
                         </td>
 
-                        {/* 5. Observation Block Trigger */}
                         <td className="px-6 py-4 max-w-xs text-slate-500 font-medium leading-relaxed">
                           <button
                             type="button"
                             onClick={() => triggerLogForm(animal, 'OBSERVATION', log)}
-                            className="w-full text-left hover:bg-slate-100/50 p-2 rounded-xl transition-colors min-h-[44px] flex items-start gap-2"
+                            className="w-full text-left hover:bg-slate-100/50 p-2 rounded-xl transition-colors min-h-[44px] flex items-start"
                           >
-                            <Edit3 size={12} className="opacity-0 group-hover:opacity-40 shrink-0 mt-0.5 transition-opacity" />
                             <span className="text-[11px] leading-normal block">
                               {log?.notes || <span className="text-slate-300 italic">No notes entered for this date...</span>}
                             </span>
@@ -337,7 +331,6 @@ export function DailyLogsPage() {
         )}
       </div>
 
-      {/* Pop-out Content Form Modal */}
       {logModalState.isOpen && logModalState.animal && (
         <DailyLogFormModal
           isOpen={logModalState.isOpen}
