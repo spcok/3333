@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from 'react';
 import { createFileRoute } from '@tanstack/react-router';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { 
   CheckCircle2, AlertCircle, Droplets, Lock, HeartPulse, 
   ChevronLeft, ChevronRight, Loader2, Edit3, X, Save
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
 import { dailyRoundsService } from '../services/dailyRoundsService';
 import { Animal, DailyRound } from '../types';
 
@@ -21,17 +22,28 @@ const SECTION_BAR = [
   { id: 'EXOTIC', label: 'Exotic' }
 ] as const;
 
-const SHIFT_OPTIONS = ['AM', 'PM', 'MIDDAY', 'NIGHT'];
+const SHIFT_OPTIONS = ['Morning', 'Afternoon'];
 
 export function DailyRoundsPage() {
   const queryClient = useQueryClient();
+  const { profile } = useAuth();
   
   const [selectedDate, setSelectedDate] = useState<string>(
     new Date().toISOString().split('T')[0]
   );
   const [activeSection, setActiveSection] = useState<string>('ALL');
-  const [activeShift, setActiveShift] = useState<string>('AM');
+  const [activeShift, setActiveShift] = useState<string>('Morning');
   
+  // Local drafts state to support safe bulk submissions
+  const [draftRounds, setDraftRounds] = useState<Record<string, Partial<DailyRound>>>({});
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [initials, setInitials] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionStatus, setSubmissionStatus] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
   const [noteModalState, setNoteModalState] = useState<{
     isOpen: boolean;
     animal: Animal | null;
@@ -43,6 +55,20 @@ export function DailyRoundsPage() {
     round: null,
     currentNote: ''
   });
+
+  // Pre-populate staff initials from custom Auth profile if loaded
+  React.useEffect(() => {
+    if (profile?.initials) {
+      setInitials(profile.initials);
+    }
+  }, [profile]);
+
+  // Flush local draft cache on selected date or shift change to prevent accidental drift
+  React.useEffect(() => {
+    setDraftRounds({});
+    setHasUnsavedChanges(false);
+    setSubmissionStatus(null);
+  }, [selectedDate, activeShift]);
 
   const { data: animals = [], isLoading: loadingAnimals } = useQuery({
     queryKey: ['animals', 'dashboard'],
@@ -62,60 +88,6 @@ export function DailyRoundsPage() {
     queryFn: () => dailyRoundsService.getRoundsByDateAndShift(selectedDate, activeShift)
   });
 
-  const toggleMutation = useMutation({
-    mutationFn: dailyRoundsService.upsertRoundToggle,
-    onMutate: async (newRound) => {
-      // Optimistic cache update for instant UI feedback
-      await queryClient.cancelQueries({ queryKey: ['daily_rounds', selectedDate, activeShift] });
-      const previousRounds = queryClient.getQueryData<DailyRound[]>(['daily_rounds', selectedDate, activeShift]);
-      
-      if (previousRounds) {
-        queryClient.setQueryData<DailyRound[]>(['daily_rounds', selectedDate, activeShift], old => {
-          if (!old) return old;
-          const exists = old.find(r => r.animal_id === newRound.animal_id);
-          if (exists) {
-            return old.map(r => r.animal_id === newRound.animal_id ? { ...r, ...newRound } : r);
-          } else {
-            return [...old, { id: 'temp-id', ...newRound, is_deleted: false } as DailyRound];
-          }
-        });
-      }
-      return { previousRounds };
-    },
-    onError: (err, newRound, context) => {
-      if (context?.previousRounds) {
-        queryClient.setQueryData(['daily_rounds', selectedDate, activeShift], context.previousRounds);
-      }
-      console.error("Toggle sync failed", err);
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['daily_rounds', selectedDate, activeShift] });
-    }
-  });
-
-  const notesMutation = useMutation({
-    mutationFn: async ({ roundId, animalId, notes }: { roundId?: string, animalId: string, notes: string | null }) => {
-      if (roundId) {
-        return await dailyRoundsService.updateRoundNotes(roundId, notes);
-      } else {
-        return await dailyRoundsService.upsertRoundToggle({
-          animal_id: animalId,
-          date: selectedDate,
-          shift: activeShift,
-          section: activeSection !== 'ALL' ? activeSection : null,
-          is_alive: true, // Default to true if creating via notes alone
-          water_checked: false,
-          locks_secured: false,
-          animal_issue_note: notes
-        });
-      }
-    },
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['daily_rounds', selectedDate, activeShift] });
-      setNoteModalState({ isOpen: false, animal: null, round: null, currentNote: '' });
-    }
-  });
-
   const filteredWorksheetRecords = useMemo(() => {
     const cleanAnimals = animals.filter(a => {
       if (a.status === 'ARCHIVED') return false;
@@ -128,11 +100,17 @@ export function DailyRoundsPage() {
       roundMap.set(r.animal_id, r);
     });
 
-    return cleanAnimals.map(animal => ({
-      animal,
-      round: roundMap.get(animal.id) || null
-    }));
-  }, [animals, rounds, activeSection]);
+    return cleanAnimals.map(animal => {
+      const dbRound = roundMap.get(animal.id) || null;
+      const draft = draftRounds[animal.id];
+      const mergedRound = draft ? { ...dbRound, ...draft } as DailyRound : dbRound;
+
+      return {
+        animal,
+        round: mergedRound
+      };
+    });
+  }, [animals, rounds, activeSection, draftRounds]);
 
   const shiftDate = (days: number) => {
     const current = new Date(selectedDate);
@@ -140,37 +118,98 @@ export function DailyRoundsPage() {
     setSelectedDate(current.toISOString().split('T')[0]);
   };
 
-  const handleToggle = (animal: Animal, round: DailyRound | null, field: 'is_alive' | 'water_checked' | 'locks_secured') => {
-    const currentAlive = round ? round.is_alive : false;
-    const currentWater = round ? round.water_checked : false;
-    const currentLocks = round ? round.locks_secured : false;
+  const handleToggle = (animal: Animal, currentRound: DailyRound | null, field: 'is_alive' | 'water_checked' | 'locks_secured') => {
+    const currentAlive = currentRound ? currentRound.is_alive : false;
+    const currentWater = currentRound ? currentRound.water_checked : false;
+    const currentLocks = currentRound ? currentRound.locks_secured : false;
 
-    // Fast-path: When a record is brand new, tapping any button usually means the animal is alive.
-    // We default is_alive to true if they are checking water or locks to save them a tap.
-    const newAliveState = field === 'is_alive' ? !currentAlive : (round ? currentAlive : true);
+    // Independent toggles behavior: clicking one button only toggles its respective column
+    const newAliveState = field === 'is_alive' ? !currentAlive : currentAlive;
+    const newWaterState = field === 'water_checked' ? !currentWater : currentWater;
+    const newLocksState = field === 'locks_secured' ? !currentLocks : currentLocks;
 
-    toggleMutation.mutate({
-      animal_id: animal.id,
-      date: selectedDate,
-      shift: activeShift,
-      section: animal.category,
-      is_alive: newAliveState,
-      water_checked: field === 'water_checked' ? !currentWater : currentWater,
-      locks_secured: field === 'locks_secured' ? !currentLocks : currentLocks,
-      animal_issue_note: round?.animal_issue_note || null
-    });
+    setDraftRounds(prev => ({
+      ...prev,
+      [animal.id]: {
+        ...prev[animal.id],
+        animal_id: animal.id,
+        is_alive: newAliveState,
+        water_checked: newWaterState,
+        locks_secured: newLocksState,
+        animal_issue_note: prev[animal.id]?.animal_issue_note !== undefined ? prev[animal.id].animal_issue_note : (currentRound?.animal_issue_note || null)
+      }
+    }));
+    setHasUnsavedChanges(true);
+    setSubmissionStatus(null);
+  };
+
+  const handleSubmitBulk = async () => {
+    if (Object.keys(draftRounds).length === 0 || !initials.trim()) return;
+
+    setIsSubmitting(true);
+    setSubmissionStatus(null);
+    try {
+      const payloads = Object.values(draftRounds).map(draft => {
+        const animal = animals.find(a => a.id === draft.animal_id);
+        const dbRound = rounds.find(r => r.animal_id === draft.animal_id);
+        
+        return {
+          animal_id: draft.animal_id!,
+          date: selectedDate,
+          shift: activeShift,
+          section: animal?.category || null,
+          is_alive: draft.is_alive ?? (dbRound?.is_alive ?? false),
+          water_checked: draft.water_checked ?? (dbRound?.water_checked ?? false),
+          locks_secured: draft.locks_secured ?? (dbRound?.locks_secured ?? false),
+          animal_issue_note: draft.animal_issue_note !== undefined ? draft.animal_issue_note : (dbRound?.animal_issue_note || null)
+        };
+      });
+
+      await dailyRoundsService.bulkUpsertRounds(payloads);
+      
+      // Invalidate queries to reload fresh validated database records
+      await queryClient.invalidateQueries({ queryKey: ['daily_rounds', selectedDate, activeShift] });
+      
+      setDraftRounds({});
+      setHasUnsavedChanges(false);
+      setSubmissionStatus({
+        type: 'success',
+        message: `Welfare sheet updated: Synchronized ${payloads.length} shift rounds.`
+      });
+      
+      setTimeout(() => {
+        setSubmissionStatus(prev => prev?.type === 'success' ? null : prev);
+      }, 6000);
+    } catch (err: any) {
+      console.error("Batch upload failed", err);
+      setSubmissionStatus({
+        type: 'error',
+        message: err.message || 'Database synchronization failure. Please verify network links.'
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       
       {/* Top Header & Controls */}
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Daily Welfare Rounds</h1>
-          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
-            Visual Health, Hydration & Security Checklist
-          </p>
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm col-span-full">
+        <div className="flex items-center justify-between xl:justify-start gap-4">
+          <div>
+            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Daily Welfare Rounds</h1>
+            <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mt-1">
+              Visual Health, Hydration & Security Checklist
+            </p>
+          </div>
+          
+          {hasUnsavedChanges && (
+            <div className="px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 text-[9px] font-black uppercase tracking-widest animate-pulse flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 inline-block"></span>
+              Unsaved Draft Workspace
+            </div>
+          )}
         </div>
         
         <div className="flex flex-col lg:flex-row items-center gap-4 self-center xl:self-auto w-full xl:w-auto">
@@ -227,6 +266,15 @@ export function DailyRoundsPage() {
         </div>
       </div>
 
+      {hasUnsavedChanges && (
+        <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-xl text-xs font-bold text-amber-800 flex items-center gap-3">
+          <AlertCircle size={18} className="text-amber-600 shrink-0" />
+          <span>
+            Notice: You have <strong>{Object.keys(draftRounds).length} unsaved animal welfare record change(s)</strong>. Changes are kept in local draft memory and will be permanently committed to the database server in bulk once signed off and submitted below. Switching dates or shifts will flush the draft.
+          </span>
+        </div>
+      )}
+
       {/* Main Checklist Matrix */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
         {roundsError ? (
@@ -264,15 +312,17 @@ export function DailyRoundsPage() {
                     const isWater = round?.water_checked || false;
                     const isLocked = round?.locks_secured || false;
                     const isComplete = isAlive && isWater && isLocked;
+                    const isDraft = draftRounds[animal.id] !== undefined;
 
                     return (
-                      <tr key={animal.id} className={`transition-colors group ${isComplete ? 'bg-emerald-50/20' : 'hover:bg-slate-50/40'}`}>
+                      <tr key={animal.id} className={`transition-colors duration-150 group ${isComplete ? 'bg-emerald-50/30 hover:bg-emerald-100/40' : 'bg-white hover:bg-slate-100'}`}>
                         
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex flex-col">
                             <span className="font-black text-slate-900 text-sm leading-tight flex items-center gap-2">
                               {animal.name}
                               {isComplete && <CheckCircle2 size={14} className="text-emerald-500" />}
+                              {isDraft && <span className="bg-amber-100 text-amber-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider">Draft</span>}
                             </span>
                             <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 mt-1">
                               {animal.species}
@@ -284,13 +334,13 @@ export function DailyRoundsPage() {
                         <td className="px-4 py-4 whitespace-nowrap text-center">
                           <button
                             onClick={() => handleToggle(animal, round, 'is_alive')}
-                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-sm border ${
+                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-md border-2 ${
                               isAlive 
-                                ? 'bg-emerald-500 border-emerald-600 text-white shadow-emerald-500/20' 
-                                : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300 hover:bg-slate-50'
+                                ? 'bg-emerald-600 border-emerald-700 text-white shadow-emerald-600/30 hover:bg-emerald-700' 
+                                : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-emerald-50 hover:border-emerald-400 hover:text-emerald-700'
                             }`}
                           >
-                            <HeartPulse size={24} className={isAlive ? '' : 'opacity-50'} />
+                            <HeartPulse size={24} className={isAlive ? 'scale-110' : 'opacity-80'} />
                           </button>
                         </td>
 
@@ -298,13 +348,13 @@ export function DailyRoundsPage() {
                         <td className="px-4 py-4 whitespace-nowrap text-center">
                           <button
                             onClick={() => handleToggle(animal, round, 'water_checked')}
-                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-sm border ${
+                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-md border-2 ${
                               isWater 
-                                ? 'bg-blue-500 border-blue-600 text-white shadow-blue-500/20' 
-                                : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300 hover:bg-slate-50'
+                                ? 'bg-blue-600 border-blue-700 text-white shadow-blue-600/30 hover:bg-blue-700' 
+                                : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-blue-50 hover:border-blue-400 hover:text-blue-700'
                             }`}
                           >
-                            <Droplets size={24} className={isWater ? '' : 'opacity-50'} />
+                            <Droplets size={24} className={isWater ? 'scale-110' : 'opacity-80'} />
                           </button>
                         </td>
 
@@ -312,13 +362,13 @@ export function DailyRoundsPage() {
                         <td className="px-4 py-4 whitespace-nowrap text-center">
                           <button
                             onClick={() => handleToggle(animal, round, 'locks_secured')}
-                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-sm border ${
+                            className={`w-14 h-14 rounded-2xl mx-auto flex items-center justify-center transition-all shadow-md border-2 ${
                               isLocked 
-                                ? 'bg-amber-500 border-amber-600 text-white shadow-amber-500/20' 
-                                : 'bg-white border-slate-200 text-slate-300 hover:border-slate-300 hover:bg-slate-50'
+                                ? 'bg-amber-500 border-amber-600 text-white shadow-amber-500/30 hover:bg-amber-600' 
+                                : 'bg-slate-100 border-slate-300 text-slate-600 hover:bg-amber-50 hover:border-amber-400 hover:text-amber-700'
                             }`}
                           >
-                            <Lock size={22} className={isLocked ? '' : 'opacity-50'} />
+                            <Lock size={22} className={isLocked ? 'scale-110' : 'opacity-80'} />
                           </button>
                         </td>
 
@@ -353,6 +403,72 @@ export function DailyRoundsPage() {
             </table>
           </div>
         )}
+      </div>
+
+      {/* Certification & Bulk Upload Control Deck */}
+      <div className="bg-slate-950 text-white rounded-2xl border border-slate-800 shadow-xl p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+        <div className="space-y-1.5 text-center md:text-left flex-1">
+          <h3 className="text-sm font-black uppercase tracking-widest text-emerald-400 flex items-center justify-center md:justify-start gap-2">
+            <CheckCircle2 size={16} />
+            Welfare Sheet Certification
+          </h3>
+          <p className="text-xs text-slate-300 font-medium max-w-xl">
+            Authorize and upload the visual checks, hydration checklist, and cage locking controls for <strong>{activeShift} Shift</strong> on <strong>{selectedDate}</strong>.
+          </p>
+          
+          {submissionStatus && (
+            <div className={`mt-3 p-3 rounded-xl text-xs font-semibold border ${
+              submissionStatus.type === 'success' 
+                ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' 
+                : 'bg-rose-500/10 text-rose-300 border-rose-500/20'
+            }`}>
+              {submissionStatus.message}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-end gap-4 w-full md:w-auto shrink-0">
+          <div className="flex flex-col w-full sm:w-auto">
+            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1.5">Staff Signature Initials</label>
+            <input 
+              type="text"
+              value={initials}
+              onChange={(e) => {
+                setInitials(e.target.value.toUpperCase().slice(0, 4));
+                setSubmissionStatus(null);
+              }}
+              placeholder="..."
+              maxLength={4}
+              className="px-4 py-2.5 bg-slate-900 border border-slate-700 text-white font-black text-sm rounded-xl outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-center w-full sm:w-24 tracking-widest uppercase transition-all"
+            />
+          </div>
+
+          <button
+            onClick={handleSubmitBulk}
+            disabled={isSubmitting || Object.keys(draftRounds).length === 0 || !initials.trim()}
+            className={`w-full sm:w-auto px-6 py-3.5 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 transition-all shadow-lg ${
+              isSubmitting 
+                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                : Object.keys(draftRounds).length === 0
+                ? 'bg-slate-900 text-slate-500 border border-slate-800 cursor-not-allowed'
+                : !initials.trim()
+                ? 'bg-slate-900 text-slate-500 border border-slate-700 cursor-not-allowed hover:border-amber-400'
+                : 'bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-emerald-500/10 active:scale-[0.98]'
+            }`}
+          >
+            {isSubmitting ? (
+              <>
+                <Loader2 size={16} className="animate-spin" />
+                Signing Off...
+              </>
+            ) : (
+              <>
+                <Save size={16} />
+                Submit {Object.keys(draftRounds).length} Rounds
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Embedded Notes Modal */}
@@ -392,16 +508,35 @@ export function DailyRoundsPage() {
               </button>
               <button 
                 type="button" 
-                disabled={notesMutation.isPending}
-                onClick={() => notesMutation.mutate({ 
-                  roundId: noteModalState.round?.id, 
-                  animalId: noteModalState.animal!.id, 
-                  notes: noteModalState.currentNote.trim() || null 
-                })}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                onClick={() => {
+                  const animalId = noteModalState.animal!.id;
+                  const trimmed = noteModalState.currentNote.trim() || null;
+                  
+                  setDraftRounds(prev => {
+                    const existingDraft = prev[animalId];
+                    const dbRound = rounds.find(r => r.animal_id === animalId);
+                    const merged = existingDraft ? { ...dbRound, ...existingDraft } : dbRound;
+
+                    return {
+                      ...prev,
+                      [animalId]: {
+                        ...prev[animalId],
+                        animal_id: animalId,
+                        is_alive: merged?.is_alive !== undefined ? merged.is_alive : true,
+                        water_checked: merged?.water_checked !== undefined ? merged.water_checked : false,
+                        locks_secured: merged?.locks_secured !== undefined ? merged.locks_secured : false,
+                        animal_issue_note: trimmed
+                      }
+                    };
+                  });
+                  setHasUnsavedChanges(true);
+                  setSubmissionStatus(null);
+                  setNoteModalState({ isOpen: false, animal: null, round: null, currentNote: '' });
+                }}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold uppercase tracking-widest rounded-xl transition-colors shadow-sm flex items-center justify-center gap-2"
               >
-                {notesMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
-                Commit Alert
+                <Save size={16} />
+                Save Draft Note
               </button>
             </div>
           </div>

@@ -15,7 +15,7 @@ const navGroups = [
     icon: PawPrint,
     items: [
       { name: 'Daily Logs', to: '/husbandry/daily-logs', icon: ClipboardList },
-      { name: 'Daily Rounds', to: '/husbandry/daily-rounds', icon: CalendarDays },
+      { name: 'Daily Rounds', to: '/husbandry/rounds', icon: CalendarDays },
       { name: 'Feeding Schedule', to: '/husbandry/feeding-schedule', icon: Utensils },
     ]
   },

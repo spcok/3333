@@ -1,5 +1,5 @@
 export type AnimalCategory = 'OWL' | 'RAPTOR' | 'MAMMAL' | 'EXOTIC';
-export type AnimalStatus = 'ON_DISPLAY' | 'OFF_DISPLAY' | 'QUARANTINE' | 'MEDICAL' | 'OFFSITE';
+export type AnimalStatus = 'ON_DISPLAY' | 'OFF_DISPLAY' | 'QUARANTINE' | 'MEDICAL' | 'OFFSITE' | 'ARCHIVED';
 export type RecordType = 'INDIVIDUAL' | 'GROUP';
 
 export interface Animal {
@@ -60,4 +60,52 @@ export interface Animal {
   next_feed_date?: string;
   next_feed_note?: string;
   subRows?: Animal[]; 
+}
+
+export interface DailyLog {
+  id: string;
+  animal_id: string;
+  log_type: 'WEIGHT' | 'FEEDING' | 'TEMPERATURE' | 'OBSERVATION' | string;
+  log_date: string;
+  notes?: string | null;
+  weight_grams?: number | null;
+  weight_unit?: string | null;
+  weight_not_required?: boolean;
+  temperature_c?: number | null;
+  basking_temp_c?: number | null;
+  cool_temp_c?: number | null;
+  feed_details?: {
+    meals?: Array<{
+      time: string;
+      food_item: string;
+      food_offered_g: number;
+      food_consumed_g: number;
+      calci_dust_added?: boolean;
+    }>;
+  } | null;
+  created_at?: string;
+  updated_at?: string;
+  created_by?: string | null;
+  modified_by?: string | null;
+  is_deleted?: boolean;
+}
+
+export interface DailyRound {
+  id: string;
+  animal_id: string;
+  date: string;
+  shift: string;
+  section: string | null;
+  is_alive: boolean;
+  water_checked: boolean;
+  locks_secured: boolean;
+  animal_issue_note: string | null;
+  completed_at: string | null;
+  completed_by: string | null;
+  created_by?: string | null;
+  modified_by?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  is_deleted: boolean;
+  status?: string;
 }

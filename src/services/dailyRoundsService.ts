@@ -76,7 +76,8 @@ export const dailyRoundsService = {
           completed_at: new Date().toISOString(),
           completed_by: activeUserId,
           modified_by: activeUserId,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          status: 'COMPLETED'
         })
         .eq('id', existingRound.id)
         .select()
@@ -101,7 +102,8 @@ export const dailyRoundsService = {
           completed_by: activeUserId,
           created_by: activeUserId,
           modified_by: activeUserId,
-          is_deleted: false
+          is_deleted: false,
+          status: 'COMPLETED'
         }])
         .select()
         .single();
@@ -109,6 +111,25 @@ export const dailyRoundsService = {
       if (error) throw error;
       return data;
     }
+  },
+
+  // Bulk-upsert multiple rounds in a batch
+  async bulkUpsertRounds(payloads: Array<{
+    animal_id: string;
+    date: string;
+    shift: string;
+    section?: string | null;
+    is_alive: boolean;
+    water_checked: boolean;
+    locks_secured: boolean;
+    animal_issue_note?: string | null;
+  }>) {
+    const results = [];
+    for (const payload of payloads) {
+      const res = await this.upsertRoundToggle(payload);
+      results.push(res);
+    }
+    return results;
   },
 
   // Save textual notes directly to a round record

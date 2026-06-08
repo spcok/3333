@@ -20,6 +20,7 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
   const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
   const [isLogModalOpen, setIsLogModalOpen] = useState(false);
   const [editingLogTarget, setEditingLogTarget] = useState<DailyLog | undefined>(undefined);
+  const [logModalMode, setLogModalMode] = useState<'WEIGHT' | 'FEEDING' | 'TEMPERATURE' | 'OBSERVATION'>('OBSERVATION');
   
   const [archiveReasonType, setArchiveReasonType] = useState('TRANSFERRED');
   const [archiveNotes, setArchiveNotes] = useState('');
@@ -61,8 +62,9 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
     });
   };
 
-  const triggerEditLog = (log: DailyLog) => {
+  const triggerEditLog = (log: DailyLog, mode: 'WEIGHT' | 'FEEDING' | 'TEMPERATURE' | 'OBSERVATION' = 'OBSERVATION') => {
     setEditingLogTarget(log);
+    setLogModalMode(mode);
     setIsLogModalOpen(true);
   };
 
@@ -159,7 +161,7 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
 
             {activeTab === 'husbandry' && (
               <button
-                onClick={() => { setEditingLogTarget(undefined); setIsLogModalOpen(true); }}
+                onClick={() => { setEditingLogTarget(undefined); setLogModalMode('OBSERVATION'); setIsLogModalOpen(true); }}
                 className="mb-2 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm shrink-0"
               >
                 <Plus size={12} /> Log Metric
@@ -232,7 +234,7 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
                                 {new Date(log.log_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
-                                <button onClick={() => triggerEditLog(log)} className="text-slate-900 font-black hover:text-emerald-600 hover:underline">
+                                <button onClick={() => triggerEditLog(log, 'WEIGHT')} className="text-slate-900 font-black hover:text-emerald-600 hover:underline">
                                   {log.weight_not_required ? (
                                     <span className="text-[10px] text-slate-400 uppercase font-bold tracking-tight">Not Required</span>
                                   ) : log.weight_grams ? (
@@ -243,7 +245,7 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
                                 </button>
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
-                                <button onClick={() => triggerEditLog(log)} className="flex flex-col text-left gap-0.5 hover:text-emerald-600">
+                                <button onClick={() => triggerEditLog(log, 'TEMPERATURE')} className="flex flex-col text-left gap-0.5 hover:text-emerald-600">
                                   {log.temperature_c && <span className="text-[10px] text-slate-600">Amb: {log.temperature_c}°C</span>}
                                   {log.basking_temp_c && <span className="text-[10px] text-amber-600 font-black">Bask: {log.basking_temp_c}°C</span>}
                                 </button>
@@ -266,13 +268,13 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
                                       </div>
                                     ))
                                   )}
-                                  <button onClick={() => { setEditingLogTarget(log); setLogMode('MEAL'); setIsLogModalOpen(true); }} className="text-[9px] font-black text-slate-400 hover:text-amber-600 uppercase tracking-widest text-left mt-0.5">
+                                  <button onClick={() => { setEditingLogTarget(log); setLogModalMode('FEEDING'); setIsLogModalOpen(true); }} className="text-[9px] font-black text-slate-400 hover:text-amber-600 uppercase tracking-widest text-left mt-0.5">
                                     + Add Sub Meal
                                   </button>
                                 </div>
                               </td>
                               <td className="px-4 py-3 max-w-xs text-slate-500 font-medium leading-relaxed">
-                                <button onClick={() => triggerEditLog(log)} className="text-left hover:text-slate-900 block w-full text-[11px]">
+                                <button onClick={() => triggerEditLog(log, 'OBSERVATION')} className="text-left hover:text-slate-900 block w-full text-[11px]">
                                   {log.notes || <span className="text-slate-300 italic">No observation recorded</span>}
                                 </button>
                               </td>
@@ -294,7 +296,8 @@ export function AnimalProfile({ animal, onClose }: AnimalProfileProps) {
           <DailyLogFormModal 
             isOpen={isLogModalOpen} 
             onClose={() => setIsLogModalOpen(false)} 
-            animalId={animal.id} 
+            animal={animal} 
+            mode={logModalMode}
             initialLogData={editingLogTarget} 
           />
         )}
